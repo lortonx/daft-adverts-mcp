@@ -11,6 +11,8 @@ import {
 export function createDaftClient(): DaftApi {
   const stored = readTokenStore();
   return new DaftApi({
+    // Android app client id — required even when .env isn't loaded (wrong cwd).
+    clientId: process.env.DAFT_CLIENT_ID ?? "daft-android-v2",
     platform: "android",
     appVersion: "9.8.1",
     timeout: 8000,

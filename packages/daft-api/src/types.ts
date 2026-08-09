@@ -502,7 +502,10 @@ export interface DaftApiOptions {
    * Requires `refreshToken`. Default: true.
    */
   autoRefresh?: boolean;
-  /** Keycloak client id used by `login()` (default "daft-android-v2"). */
+  /**
+   * Keycloak client id used by `login()` / `refreshToken()` / `logout()`.
+   * Default: `process.env.DAFT_CLIENT_ID`.
+   */
   clientId?: string;
   /**
    * Called whenever access/refresh tokens change (login, refresh rotation, clear).

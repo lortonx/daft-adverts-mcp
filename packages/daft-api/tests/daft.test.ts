@@ -9,6 +9,9 @@ import type {
   TokenResponse,
 } from "../src/types";
 
+/** Production value lives in DAFT_CLIENT_ID (root .env). */
+process.env.DAFT_CLIENT_ID ??= "daft-android-v2";
+
 const LOG_DIR = "tests/logs";
 const RESPONSE_LOG = "tests/logs/test.log";
 mkdirSync(LOG_DIR, { recursive: true });
@@ -226,9 +229,20 @@ describe("DaftApi", () => {
       expect(client).toBeDefined();
     });
 
-    it("should default clientId to daft-android-v2", () => {
+    it("should resolve clientId from DAFT_CLIENT_ID", () => {
       const client = new DaftApi({});
       expect(client).toBeDefined();
+    });
+
+    it("should throw when clientId and DAFT_CLIENT_ID are missing", () => {
+      const prev = process.env.DAFT_CLIENT_ID;
+      delete process.env.DAFT_CLIENT_ID;
+      try {
+        expect(() => new DaftApi({})).toThrow(/DAFT_CLIENT_ID/);
+      } finally {
+        if (prev === undefined) delete process.env.DAFT_CLIENT_ID;
+        else process.env.DAFT_CLIENT_ID = prev;
+      }
     });
   });
 

@@ -58,16 +58,18 @@ Optional env (see root `.env.example`):
 
 Logs for stdio go to **stderr** only (stdout is JSON-RPC).
 
-## Cursor
+## Cursor / Cursor CLI
 
-Configs (no secrets — tokens via `envFile` → root `.env`):
+Launch **bun directly** (not `cmd` / `run-mcp.cmd` — wrapping stdio through `cmd.exe` can hang Cursor CLI after MCP approve):
 
 - Project: [`.cursor/mcp.json`](../../.cursor/mcp.json)
 - Global: `C:\Users\lorto\.cursor\mcp.json`
 
+`src/boot.ts` loads the monorepo `.env` and clears `ELECTRON_RUN_AS_NODE`, so wrong cwd is fine.
+
 MCP tools are **not** slash-commands. After reload they show under **Settings → MCP → daft** and in Agent chat **Available Tools**.
 
-If tools stay at 0: open folder `F:\aiprojects\daft.ie` in Cursor, then toggle `daft` off/on under MCP. Check **Output → MCP Logs** for `EPERM` / connect errors.
+If the CLI hangs after approving servers: kill stuck `bun` MCP processes, ensure mcp.json uses `bun.exe` + `index.ts` (no `.cmd`), restart the CLI.
 
 ## Inspector
 

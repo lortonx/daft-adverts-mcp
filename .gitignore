@@ -11,6 +11,7 @@ dist/
 
 # Test output
 packages/daft-api/tests/logs/
+packages/adverts-api/tests/logs/
 
 # Logs
 *.log
@@ -22,3 +23,11 @@ packages/daft-api/tests/logs/
 packages/daft-api/research/**/prefs/
 packages/daft-api/research/**/*.apk
 packages/daft-api/research/**/*.zip
+packages/adverts-api/research/**/prefs/
+packages/adverts-api/research/**/*.apk
+packages/adverts-api/research/**/*.zip
+packages/adverts-api/research/**/jadx-out/
+.adverts-tokens.json
+research
+logs
+.cursor

@@ -9,6 +9,8 @@ import type {
 } from "@daft-ie/api";
 import { createServer } from "../src/create-server";
 
+process.env.DAFT_CLIENT_ID ??= "daft-android-v2";
+
 const mockSearchResponse: SearchResponse = {
   listings: [
     {

@@ -74,6 +74,22 @@ export class ApiError extends Error {
 }
 
 /**
+ * Keycloak client id from env (`DAFT_CLIENT_ID`).
+ * Prefer passing `clientId` on {@link DaftApiOptions} in tests.
+ */
+export const CLIENT_ID = process.env.DAFT_CLIENT_ID ?? "";
+
+function resolveClientId(override?: string): string {
+  const value = override ?? process.env.DAFT_CLIENT_ID ?? "";
+  if (!value) {
+    throw new Error(
+      "DAFT_CLIENT_ID is not set (pass DaftApiOptions.clientId or set the env var)"
+    );
+  }
+  return value;
+}
+
+/**
  * Daft.ie API Client
  * @example
  * ```typescript
@@ -205,7 +221,7 @@ export class DaftApi {
     this.token = options.authToken ?? options.token;
     this.refreshTokenValue = options.refreshToken;
     this.autoRefresh = options.autoRefresh ?? true;
-    this.clientId = options.clientId ?? "daft-android-v2";
+    this.clientId = resolveClientId(options.clientId);
     this.onTokensChange = options.onTokensChange;
 
     const platform = options.platform ?? "web";

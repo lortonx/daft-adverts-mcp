@@ -1,3 +1,5 @@
+import { createAdvertsClient } from "@adverts-ie/mcp/client";
+import { createServer as createAdvertsServer } from "@adverts-ie/mcp";
 import { createDaftClient } from "@daft-ie/mcp/client";
 import { createServer as createDaftServer } from "@daft-ie/mcp";
 import { createMcpFastifyApp } from "@modelcontextprotocol/fastify";
@@ -9,9 +11,13 @@ const port = Number(process.env.MCP_HOST_PORT ?? "3100");
 
 /** Shared clients — auth and state survive across HTTP requests. */
 const daft = createDaftClient();
+const adverts = createAdvertsClient();
 
 const daftHandler = toNodeHandler(
   createMcpHandler(() => createDaftServer(daft))
+);
+const advertsHandler = toNodeHandler(
+  createMcpHandler(() => createAdvertsServer(adverts))
 );
 
 const app = createMcpFastifyApp({ host });
@@ -20,14 +26,16 @@ app.all("/mcp/daft", (request, reply) =>
   daftHandler(request.raw, reply.raw, request.body)
 );
 
-// Future MCPs:
-// app.all("/mcp/<name>", (request, reply) => otherHandler(...));
+app.all("/mcp/adverts", (request, reply) =>
+  advertsHandler(request.raw, reply.raw, request.body)
+);
 
 app.get("/health", async () => ({
   ok: true,
-  endpoints: ["/mcp/daft"],
+  endpoints: ["/mcp/daft", "/mcp/adverts"],
 }));
 
 await app.listen({ host, port });
 console.error(`mcp-host listening on http://${host}:${port}`);
-console.error(`  daft → http://${host}:${port}/mcp/daft`);
+console.error(`  daft    → http://${host}:${port}/mcp/daft`);
+console.error(`  adverts → http://${host}:${port}/mcp/adverts`);

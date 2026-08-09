@@ -21,7 +21,7 @@
  * @packageDocumentation
  */
 
-export { ApiError, DaftApi } from "./daft";
+export { ApiError, DaftApi, CLIENT_ID } from "./daft";
 export type {
   // Client options
   DaftApiOptions,

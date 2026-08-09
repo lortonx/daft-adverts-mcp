@@ -10,6 +10,7 @@
     "test": "bun test"
   },
   "dependencies": {
+    "@adverts-ie/mcp": "*",
     "@daft-ie/mcp": "*",
     "@modelcontextprotocol/fastify": "^2.0.0",
     "@modelcontextprotocol/node": "^2.0.0",

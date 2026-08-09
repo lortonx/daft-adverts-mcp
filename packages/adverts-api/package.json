@@ -1,0 +1,19 @@
+{
+  "name": "@adverts-ie/api",
+  "version": "1.0.0",
+  "description": "Unofficial TypeScript API client for Adverts.ie",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "scripts": {
+    "test": "bun test --reporter=junit --reporter-outfile=tests/logs/junit.xml > /dev/null 2>&1; bun test",
+    "test:log": "bun test --reporter=junit --reporter-outfile=tests/logs/junit.xml > /dev/null 2>&1",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {},
+  "devDependencies": {
+    "@types/bun": "latest",
+    "@types/node": "^22.0.0",
+    "typescript": "^5.0.0"
+  },
+  "license": "MIT"
+}

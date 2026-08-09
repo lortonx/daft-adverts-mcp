@@ -4,6 +4,8 @@ import { createDaftClient } from "@daft-ie/mcp/client";
 import { createServer as createDaftServer } from "@daft-ie/mcp";
 import { createMcpHandler } from "@modelcontextprotocol/server";
 
+process.env.DAFT_CLIENT_ID ??= "daft-android-v2";
+
 /**
  * In-process mount smoke test (same wiring as Fastify → toNodeHandler).
  * Does not bind a TCP port.

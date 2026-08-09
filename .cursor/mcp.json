@@ -5,11 +5,14 @@
       "command": "C:\\Users\\lorto\\.bun\\bin\\bun.exe",
       "args": [
         "F:/aiprojects/daft.ie/packages/daft-mcp/src/index.ts"
-      ],
-      "envFile": "F:/aiprojects/daft.ie/.env"
+      ]
     },
-    "daft-http": {
-      "url": "http://127.0.0.1:3100/mcp/daft"
+    "adverts": {
+      "type": "stdio",
+      "command": "C:\\Users\\lorto\\.bun\\bin\\bun.exe",
+      "args": [
+        "F:/aiprojects/daft.ie/packages/adverts-mcp/src/index.ts"
+      ]
     }
   }
 }
