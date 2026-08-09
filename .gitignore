@@ -1,0 +1,24 @@
+# Environment
+.env
+.env.*
+!.env.example
+.daft-tokens.json
+
+# Node
+node_modules/
+dist/
+*.tsbuildinfo
+
+# Test output
+packages/daft-api/tests/logs/
+
+# Logs
+*.log
+
+# OS
+.DS_Store
+
+# Local reverse-engineering dumps (may contain tokens)
+packages/daft-api/research/**/prefs/
+packages/daft-api/research/**/*.apk
+packages/daft-api/research/**/*.zip

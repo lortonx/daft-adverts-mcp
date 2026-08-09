@@ -1,0 +1,7 @@
+{
+  "name": "daft-ie-monorepo",
+  "private": true,
+  "workspaces": [
+    "packages/*"
+  ]
+}

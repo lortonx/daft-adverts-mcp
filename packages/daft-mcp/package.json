@@ -1,0 +1,32 @@
+{
+  "name": "@daft-ie/mcp",
+  "version": "1.0.0",
+  "description": "MCP server for Daft.ie — search and property tools via @daft-ie/api",
+  "type": "module",
+  "main": "./src/create-server.ts",
+  "exports": {
+    ".": "./src/create-server.ts",
+    "./client": "./src/client.ts",
+    "./stdio": "./src/index.ts"
+  },
+  "bin": {
+    "daft-mcp": "./src/index.ts"
+  },
+  "scripts": {
+    "start": "bun src/index.ts",
+    "test": "bun test",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@daft-ie/api": "*",
+    "@modelcontextprotocol/server": "^2.0.0",
+    "zod": "^4.0.0"
+  },
+  "devDependencies": {
+    "@modelcontextprotocol/client": "^2.0.0",
+    "@types/bun": "latest",
+    "@types/node": "^22.0.0",
+    "typescript": "^5.0.0"
+  },
+  "license": "MIT"
+}
