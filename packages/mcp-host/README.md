@@ -65,7 +65,7 @@ docker run --rm -p 3100:3100 --env-file .env \
   daft-mcp-host
 ```
 
-Health: `GET http://127.0.0.1:3100/health` (also used by Docker `HEALTHCHECK`).
+Health: `GET /health` — Docker `HEALTHCHECK` uses `curl` against `PORT` / `MCP_HOST_PORT` (default 3100).
 
 Point Cursor / OpenCode / Hermes at `http://127.0.0.1:3100/mcp/daft` and `…/mcp/adverts` as usual.
 
