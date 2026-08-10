@@ -32,6 +32,32 @@ const detailSchema = z
     "Response size: minimal (id/title/price/location), standard (default card + dates/seller flags), full (API passthrough minus image/tracking junk)"
   );
 
+const ADVERTS_SITE = "https://adverts.ie";
+
+/** Turn site-relative paths into absolute https URLs; leave absolute URLs as-is (no www). */
+function absoluteUrl(base: string, pathOrUrl: unknown): string | undefined {
+  if (typeof pathOrUrl !== "string") return undefined;
+  const s = pathOrUrl.trim();
+  if (!s) return undefined;
+  if (/^https?:\/\//i.test(s)) {
+    return s.replace(/^(https?:\/\/)www\./i, "$1");
+  }
+  if (s.startsWith("//")) {
+    return `https:${s}`.replace(/^(https?:\/\/)www\./i, "$1");
+  }
+  const path = s.startsWith("/") ? s : `/${s}`;
+  return `${base.replace(/\/$/, "")}${path}`;
+}
+
+function withAbsoluteAdvertsLinks(
+  obj: Record<string, unknown>
+): Record<string, unknown> {
+  const out = { ...obj };
+  const href = absoluteUrl(ADVERTS_SITE, out.href);
+  if (href) out.href = href;
+  return out;
+}
+
 const MINIMAL_AD = [
   "ad_id",
   "title",
@@ -40,6 +66,7 @@ const MINIMAL_AD = [
   "location",
   "ad_type",
   "ad_status",
+  "href",
 ] as const;
 
 const STANDARD_AD = [
@@ -119,16 +146,23 @@ function projectAdvert(
   detail: DetailLevel
 ): Record<string, unknown> {
   const raw = ad as unknown as Record<string, unknown>;
-  if (detail === "full") return raw;
+  if (detail === "full") return withAbsoluteAdvertsLinks(raw);
   const keys = detail === "minimal" ? MINIMAL_AD : STANDARD_AD;
-  return pick(raw, keys) ?? {};
+  return withAbsoluteAdvertsLinks(pick(raw, keys) ?? {});
 }
 
 function projectSearchBody(
   body: SearchResponse,
   detail: DetailLevel
 ): unknown {
-  if (detail === "full") return body;
+  if (detail === "full") {
+    return {
+      ...body,
+      data: (body.data ?? []).map((ad) =>
+        withAbsoluteAdvertsLinks(ad as unknown as Record<string, unknown>)
+      ),
+    };
+  }
   return {
     data: (body.data ?? []).map((ad) => projectAdvert(ad, detail)),
     pagination: body.pagination,
@@ -156,34 +190,50 @@ function projectSearch(
 function projectAdDetails(res: AdResponse, detail: DetailLevel): unknown {
   const inner = res.response;
   if (!inner) return { status: res.status };
-  if (detail === "full") return res;
 
   const advert = inner.advert ?? inner;
-  const projected = pick(advert as unknown as Record<string, unknown>, [
-    "id",
-    "ad_id",
-    "title",
-    "description",
-    "price",
-    "ad_status",
-    "ad_type",
-    "ad_subtype",
-    "ad_condition",
-    "location",
-    "county_id",
-    "area_id",
-    "region_id",
-    "category_id",
-    "user_id",
-    "user",
-    "href",
-    "start_date",
-    "refresh_date",
-    "comment_count",
-    "num_views",
-    "shipping_options",
-    "payment_options",
-  ]);
+  if (detail === "full") {
+    const abs = withAbsoluteAdvertsLinks(
+      advert as unknown as Record<string, unknown>
+    );
+    if (inner.advert) {
+      return { ...res, response: { ...inner, advert: abs } };
+    }
+    return {
+      ...res,
+      response: withAbsoluteAdvertsLinks({
+        ...(inner as unknown as Record<string, unknown>),
+      }),
+    };
+  }
+
+  const projected = withAbsoluteAdvertsLinks(
+    pick(advert as unknown as Record<string, unknown>, [
+      "id",
+      "ad_id",
+      "title",
+      "description",
+      "price",
+      "ad_status",
+      "ad_type",
+      "ad_subtype",
+      "ad_condition",
+      "location",
+      "county_id",
+      "area_id",
+      "region_id",
+      "category_id",
+      "user_id",
+      "user",
+      "href",
+      "start_date",
+      "refresh_date",
+      "comment_count",
+      "num_views",
+      "shipping_options",
+      "payment_options",
+    ]) ?? {}
+  );
 
   return {
     status: res.status,

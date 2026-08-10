@@ -90,6 +90,34 @@ const STANDARD_SELLER = [
 
 type DetailLevel = "minimal" | "standard" | "full";
 
+const DAFT_SITE = "https://daft.ie";
+
+/** Turn site-relative paths into absolute https URLs; leave absolute URLs as-is (no www). */
+function absoluteUrl(base: string, pathOrUrl: unknown): string | undefined {
+  if (typeof pathOrUrl !== "string") return undefined;
+  const s = pathOrUrl.trim();
+  if (!s) return undefined;
+  if (/^https?:\/\//i.test(s)) {
+    return s.replace(/^(https?:\/\/)www\./i, "$1");
+  }
+  if (s.startsWith("//")) {
+    return `https:${s}`.replace(/^(https?:\/\/)www\./i, "$1");
+  }
+  const path = s.startsWith("/") ? s : `/${s}`;
+  return `${base.replace(/\/$/, "")}${path}`;
+}
+
+function withAbsoluteDaftLinks(
+  obj: Record<string, unknown>
+): Record<string, unknown> {
+  const out = { ...obj };
+  const path = absoluteUrl(DAFT_SITE, out.seoFriendlyPath);
+  if (path) out.seoFriendlyPath = path;
+  const canonical = absoluteUrl(DAFT_SITE, out.canonicalUrl);
+  if (canonical) out.canonicalUrl = canonical;
+  return out;
+}
+
 function jsonForMcp(value: unknown): string {
   return JSON.stringify(value, (key, v) => (DENY.has(key) ? undefined : v), 2);
 }
@@ -111,7 +139,7 @@ function projectListing(
   detail: DetailLevel
 ): Record<string, unknown> {
   const raw = listing as unknown as Record<string, unknown>;
-  if (detail === "full") return raw;
+  if (detail === "full") return withAbsoluteDaftLinks(raw);
 
   const listingKeys = detail === "minimal" ? MINIMAL_LISTING : STANDARD_LISTING;
   const sellerKeys = detail === "minimal" ? MINIMAL_SELLER : STANDARD_SELLER;
@@ -121,21 +149,38 @@ function projectListing(
     sellerKeys
   );
   if (seller) projected.seller = seller;
-  return projected;
+  return withAbsoluteDaftLinks(projected);
 }
 
 function projectSearch(
   response: SearchResponse,
   detail: DetailLevel
 ): unknown {
-  if (detail === "full") return response;
+  if (detail === "full") {
+    return {
+      ...response,
+      listings: response.listings.map((item) => {
+        const row = item as { listing: Listing; canonicalUrl?: string };
+        const out: Record<string, unknown> = {
+          ...row,
+          listing: withAbsoluteDaftLinks(
+            row.listing as unknown as Record<string, unknown>
+          ),
+        };
+        const canonical = absoluteUrl(DAFT_SITE, row.canonicalUrl);
+        if (canonical) out.canonicalUrl = canonical;
+        return out;
+      }),
+    };
+  }
   return {
     listings: response.listings.map((item) => {
       const out: Record<string, unknown> = {
         listing: projectListing(item.listing, detail),
       };
       const extra = item as { canonicalUrl?: string };
-      if (extra.canonicalUrl) out.canonicalUrl = extra.canonicalUrl;
+      const canonical = absoluteUrl(DAFT_SITE, extra.canonicalUrl);
+      if (canonical) out.canonicalUrl = canonical;
       return out;
     }),
     paging: response.paging,
@@ -146,11 +191,22 @@ function projectProperty(
   response: PropertyDetailsResponse,
   detail: DetailLevel
 ): unknown {
-  if (detail === "full") return response;
+  if (detail === "full") {
+    const out: Record<string, unknown> = {
+      ...response,
+      listing: withAbsoluteDaftLinks(
+        response.listing as unknown as Record<string, unknown>
+      ),
+    };
+    const canonical = absoluteUrl(DAFT_SITE, response.canonicalUrl);
+    if (canonical) out.canonicalUrl = canonical;
+    return out;
+  }
   const out: Record<string, unknown> = {
     listing: projectListing(response.listing, detail),
   };
-  if (response.canonicalUrl) out.canonicalUrl = response.canonicalUrl;
+  const canonical = absoluteUrl(DAFT_SITE, response.canonicalUrl);
+  if (canonical) out.canonicalUrl = canonical;
   if (response.listingViews !== undefined) {
     out.listingViews = response.listingViews;
   }

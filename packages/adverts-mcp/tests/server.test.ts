@@ -24,6 +24,7 @@ const mockSearch: OldSearchResponse = {
         ad_status: "active",
         priImageUrl: "https://cdn.example/big.jpg",
         tracking_pixel: "https://track.example/p",
+        href: "/computers/macbook-pro-14/111",
         has_premium_badge: 0,
         is_watched: 0,
         user: "seller1",
@@ -275,6 +276,9 @@ describe("adverts MCP server", () => {
     expect(body.response.data).toHaveLength(2);
     expect(body.response.data[0].ad_id).toBe(111);
     expect(body.response.data[0].title).toBe("MacBook Pro 14");
+    expect(body.response.data[0].href).toBe(
+      "https://adverts.ie/computers/macbook-pro-14/111"
+    );
     expect(body.response.data[0].priImageUrl).toBeUndefined();
     expect(body.response.data[0].tracking_pixel).toBeUndefined();
     expect(body.response.sentence).toBe("MacBook in Dublin");

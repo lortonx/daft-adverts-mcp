@@ -41,7 +41,7 @@ const mockSearchResponse: SearchResponse = {
           backgroundColour: "#fff",
         },
         media: { images: [{ size720x480: "https://cdn.example/big.jpg" }] },
-        seoFriendlyPath: "/for-sale/apartment-example/1234567",
+        seoFriendlyPath: "https://daft.ie/for-sale/apartment-example/1234567",
         publishDate: 1705311000,
       },
     },
@@ -301,7 +301,7 @@ describe("daft MCP server", () => {
       price: "€350,000",
       numBedrooms: "2 Bed",
       propertyType: "apartments",
-      seoFriendlyPath: "/for-sale/apartment-example/1234567",
+      seoFriendlyPath: "https://daft.ie/for-sale/apartment-example/1234567",
       publishDate: 1705311000,
       seller: {
         sellerId: 9876,
@@ -335,7 +335,7 @@ describe("daft MCP server", () => {
       id: 1234567,
       title: "2 Bed Apartment in Dublin 4",
       price: "€350,000",
-      seoFriendlyPath: "/for-sale/apartment-example/1234567",
+      seoFriendlyPath: "https://daft.ie/for-sale/apartment-example/1234567",
       seller: { name: "Smith Properties", sellerType: "BRANDED_AGENT" },
     });
   });
@@ -387,7 +387,7 @@ describe("daft MCP server", () => {
     expect(payload.listings[0].listing.areaName).toBe("dublin-4-dublin");
     expect(payload.listings[0].listing.listingViews).toBe(42);
     expect(payload.listings[0].canonicalUrl).toBe(
-      "https://www.daft.ie/for-sale/apartment-example/1234567"
+      "https://daft.ie/for-sale/apartment-example/1234567"
     );
     expect(payload.listings[0].listing).not.toHaveProperty("facilities");
     expect(payload.listings[1].listing).not.toHaveProperty("description");
@@ -558,7 +558,7 @@ describe("daft MCP server", () => {
       canonicalUrl: string;
     };
     expect(payload.canonicalUrl).toBe(
-      "https://www.daft.ie/for-sale/apartment-example/1234567"
+      "https://daft.ie/for-sale/apartment-example/1234567"
     );
     expect(payload.listing.description).toBe("Bright apartment near the canal");
     expect(payload.listing.features).toEqual(["Parking", "Alarm"]);
