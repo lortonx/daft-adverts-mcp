@@ -267,7 +267,10 @@ export class AdvertsApi {
   private appVersionCode: string;
   private appTitle: string;
   private timeout: number;
-  private fetchFn: typeof fetch;
+  private fetchFn: (
+    input: string | URL | Request,
+    init?: RequestInit
+  ) => Promise<Response>;
   private accessToken?: string;
   private onTokensChange?: (tokens: AdvertsTokensSnapshot | null) => void;
 
@@ -284,7 +287,13 @@ export class AdvertsApi {
       options.userAgent ??
       `Adverts/${ver} (samsung SM-J730FM; android 9; Scale/2.0)`;
     this.timeout = options.timeout ?? 30_000;
-    this.fetchFn = options.fetchFn ?? fetch;
+    const proxy = process.env.HTTP_PROXY?.trim();
+    this.fetchFn =
+      options.fetchFn ??
+      (proxy
+        ? ((input, init) =>
+            fetch(input, { ...init, proxy } as RequestInit))
+        : fetch);
     this.accessToken = options.accessToken;
     this.onTokensChange = options.onTokensChange;
   }

@@ -34,6 +34,7 @@ Env (root `.env` / `.env.example`):
 | `MCP_HOST_PORT` | port (default `3100`) |
 | `DAFT_*` | Daft API / tokens — see [`../daft-mcp`](../daft-mcp) |
 | `ADVERTS_*` | Adverts API keys / tokens — see [`../adverts-mcp`](../adverts-mcp) |
+| `HTTP_PROXY` | optional HTTP proxy for both APIs (Bun) |
 
 Keep the host running while clients are connected. Check:
 

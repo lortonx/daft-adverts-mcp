@@ -484,7 +484,10 @@ export interface DaftApiOptions {
   /** Request timeout in ms */
   timeout?: number;
   /** Custom fetch function (for testing or custom HTTP client) */
-  fetchFn?: typeof fetch;
+  fetchFn?: (
+    input: string | URL | Request,
+    init?: RequestInit
+  ) => Promise<Response>;
   /** Platform: "web" or "android" (default: "web") */
   platform?: "web" | "android";
   /** App version (default: "9.8.1") */

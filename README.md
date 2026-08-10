@@ -90,6 +90,7 @@ Shared root [`.env`](.env.example) (gitignored). Rough split:
 |------|---------|
 | `DAFT_CLIENT_ID`, `DAFT_REFRESH_TOKEN`, `DAFT_ACCESS_TOKEN`, … | `@daft-ie/api` / `@daft-ie/mcp` |
 | `ADVERTS_NEW_API_KEY`, `ADVERTS_OLD_API_KEY`, `ADVERTS_ACCESS_TOKEN`, … | `@adverts-ie/api` / `@adverts-ie/mcp` |
+| `HTTP_PROXY` | optional outbound proxy for both APIs |
 | `MCP_HOST`, `MCP_HOST_PORT` | `@daft-ie/mcp-host` |
 
 Token files after login: `.daft-tokens.json`, `.adverts-tokens.json` (override with `*_TOKEN_FILE`).

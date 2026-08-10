@@ -6,8 +6,11 @@ import { createMcpFastifyApp } from "@modelcontextprotocol/fastify";
 import { toNodeHandler } from "@modelcontextprotocol/node";
 import { createMcpHandler } from "@modelcontextprotocol/server";
 
-const host = process.env.MCP_HOST ?? "127.0.0.1";
-const port = Number(process.env.MCP_HOST_PORT ?? "3100");
+// Coolify sets HOST/PORT; local/Docker may use MCP_HOST / MCP_HOST_PORT.
+const host = process.env.MCP_HOST ?? process.env.HOST ?? "127.0.0.1";
+const port = Number(
+  process.env.PORT ?? process.env.MCP_HOST_PORT ?? "3100"
+);
 
 /** Shared clients — auth and state survive across HTTP requests. */
 const daft = createDaftClient();

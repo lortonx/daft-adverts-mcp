@@ -58,6 +58,7 @@ Required for real calls (see [`.env.example`](../../.env.example)):
 - `ADVERTS_NEW_API_KEY` — `X-Adverts-Api-Key` on the fresh API
 - `ADVERTS_OLD_API_KEY` — query `api_key` on legacy JSON endpoints
 - Optional: `ADVERTS_ACCESS_TOKEN`, `ADVERTS_USERNAME` / `ADVERTS_PASSWORD` (login may need recaptcha)
+- Optional: `HTTP_PROXY` — HTTP proxy for API calls (Bun); see root README
 
 ## Tests / research
 

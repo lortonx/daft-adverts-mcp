@@ -64,6 +64,8 @@ const daft = new DaftApi({
 
 Env (monorepo `.env`): `DAFT_CLIENT_ID`, `DAFT_REFRESH_TOKEN`, `DAFT_ACCESS_TOKEN`, optional username/password — see [`.env.example`](../../.env.example).
 
+Optional outbound proxy: `HTTP_PROXY` (HTTP URL; Bun). See root README.
+
 ## Search
 
 ### Search helpers

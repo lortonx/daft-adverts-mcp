@@ -109,7 +109,10 @@ export class DaftApi {
   private userAgent: string;
   private headers: Record<string, string>;
   private timeout: number;
-  private fetchFn: typeof fetch;
+  private fetchFn: (
+    input: string | URL | Request,
+    init?: RequestInit
+  ) => Promise<Response>;
   private appVersion: string;
   private token?: string;
   private refreshTokenValue?: string;
@@ -217,7 +220,13 @@ export class DaftApi {
       options.mapperUrl ?? "https://dsch-ad-mapper-sp-prod.apps.dsch.ninja";
     this.appVersion = options.appVersion ?? "9.8.1";
     this.timeout = options.timeout ?? 10000;
-    this.fetchFn = options.fetchFn ?? fetch;
+    const proxy = process.env.HTTP_PROXY?.trim();
+    this.fetchFn =
+      options.fetchFn ??
+      (proxy
+        ? ((input, init) =>
+            fetch(input, { ...init, proxy } as RequestInit))
+        : fetch);
     this.token = options.authToken ?? options.token;
     this.refreshTokenValue = options.refreshToken;
     this.autoRefresh = options.autoRefresh ?? true;

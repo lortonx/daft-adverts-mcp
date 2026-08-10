@@ -37,7 +37,10 @@ export interface AdvertsApiOptions {
   appTitle?: string;
   userAgent?: string;
   timeout?: number;
-  fetchFn?: typeof fetch;
+  fetchFn?: (
+    input: string | URL | Request,
+    init?: RequestInit
+  ) => Promise<Response>;
   onTokensChange?: (tokens: AdvertsTokensSnapshot | null) => void;
 }
 
