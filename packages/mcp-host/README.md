@@ -34,7 +34,8 @@ Env (root `.env` / `.env.example`):
 | `MCP_HOST_PORT` | port (default `3100`) |
 | `DAFT_*` | Daft API / tokens — see [`../daft-mcp`](../daft-mcp) |
 | `ADVERTS_*` | Adverts API keys / tokens — see [`../adverts-mcp`](../adverts-mcp) |
-| `HTTP_PROXY` | optional HTTP proxy for both APIs (Bun) |
+| `HTTP_PROXY` | optional HTTP proxy for both APIs (Bun); Docker+Tailscale sets this |
+| `TS_AUTHKEY` | Docker: Tailscale auth key |
 
 Keep the host running while clients are connected. Check:
 
@@ -54,6 +55,18 @@ docker run --rm -p 3100:3100 --env-file .env daft-mcp-host
 ```
 
 Image sets `MCP_HOST=0.0.0.0` so the port is reachable from the host. Pass API keys / tokens via `--env-file .env` or `-e` (do not bake secrets into the image).
+
+### Tailscale + Pi exit node (one container)
+
+Userspace Tailscale (no Coolify TUN). `Bun → http://127.0.0.1:1055 → exit-node 100.86.200.43`.
+
+Only env: `TS_AUTHKEY`. On Pi: `sudo tailscale set --advertise-exit-node` (+ approve in admin).
+
+```bash
+docker run --rm -p 3100:3100 --env-file .env \
+  -v daft-ts-state:/var/lib/tailscale \
+  daft-mcp-host
+```
 
 Optional: persist login tokens across restarts:
 
