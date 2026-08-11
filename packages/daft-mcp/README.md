@@ -13,6 +13,8 @@ Built with the official [MCP TypeScript SDK v2](https://ts.sdk.modelcontextproto
 | `auth_logout` | Clear / revoke session |
 | `get_enquiry_form` | Saved enquiry fields for a listing (**auth**) |
 | `send_enquiry` | Send listing enquiry / reply (**auth**) |
+| `get_report_reasons` | Reasons for reporting a listing |
+| `report_ad` | Report a listing |
 | `search_for_sale` | Residential for sale |
 | `search_for_rent` | Residential to rent |
 | `search_sharing` | Rooms / sharing |
@@ -20,7 +22,7 @@ Built with the official [MCP TypeScript SDK v2](https://ts.sdk.modelcontextproto
 | `autocomplete` | Area autocomplete |
 | `resolve_area` | County/area → shape ids |
 
-Search / details work **without** login. Use `auth_login` then `get_enquiry_form` / `send_enquiry` to contact a seller. Google/Apple SSO accounts need a Keycloak password.
+Search / details / report work **without** login. Use `auth_login` then `get_enquiry_form` / `send_enquiry` to contact a seller. Google/Apple SSO accounts need a Keycloak password.
 
 Search tools accept `page` / `pageSize`, optional `enrichTop` (1–3), and `detail`:
 
@@ -30,7 +32,7 @@ Search tools accept `page` / `pageSize`, optional `enrichTop` (1–3), and `deta
 | `standard` (default) | compact card | beds/type/dates/seller contact + enrich fields; **no** facilities/ber/platform/featured* |
 | `full` | large | API passthrough minus CDN/ads junk |
 
-Search / property / area tools are read-only (`readOnlyHint: true`). `send_enquiry` is not.
+Search / property / area / `get_report_reasons` are read-only (`readOnlyHint: true`). `send_enquiry` and `report_ad` are not.
 
 ## Run
 

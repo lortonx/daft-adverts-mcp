@@ -194,6 +194,14 @@ function routeFetch(url: string, init?: RequestInit): Promise<Response> {
   if (url.includes("/old/v4/reply")) {
     return Promise.resolve(jsonResponse({}));
   }
+  if (url.includes("/old/v1/report/reasons")) {
+    return Promise.resolve(
+      jsonResponse([{ id: 1, title: "Fraudulent", text: "This ad is fraudulent" }])
+    );
+  }
+  if (url.includes("/old/v1/report")) {
+    return Promise.resolve(jsonResponse({}));
+  }
   return Promise.resolve(jsonResponse({ error: "not found" }, 404));
 }
 
@@ -244,12 +252,40 @@ describe("daft MCP server", () => {
       "autocomplete",
       "get_enquiry_form",
       "get_property",
+      "get_report_reasons",
+      "report_ad",
       "resolve_area",
       "search_for_rent",
       "search_for_sale",
       "search_sharing",
       "send_enquiry",
     ]);
+  });
+
+  it("get_report_reasons and report_ad work without auth", async () => {
+    const reasons = await client.callTool({
+      name: "get_report_reasons",
+      arguments: {},
+    });
+    expect(reasons.isError).toBeFalsy();
+    expect(textPayload(reasons)).toEqual({
+      reasons: [{ id: 1, title: "Fraudulent", text: "This ad is fraudulent" }],
+    });
+
+    const reported = await client.callTool({
+      name: "report_ad",
+      arguments: {
+        adId: 1234567,
+        reason: 1,
+        message: "Looks fake",
+      },
+    });
+    expect(reported.isError).toBeFalsy();
+    expect(textPayload(reported)).toEqual({
+      ok: true,
+      adId: 1234567,
+      reason: 1,
+    });
   });
 
   it("send_enquiry / get_enquiry_form require auth then succeed", async () => {

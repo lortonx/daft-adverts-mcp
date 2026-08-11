@@ -850,5 +850,68 @@ export function createServer(daft: DaftApi = createDaftClient()): McpServer {
     }
   );
 
+  server.registerTool(
+    "get_report_reasons",
+    {
+      title: "Get Daft report reasons",
+      description:
+        "List reasons a listing can be reported for. Use reason id with report_ad.",
+      annotations: readOnly,
+      inputSchema: z.object({}),
+    },
+    async () => {
+      try {
+        const reasons = await daft.getReportReasons();
+        return ok({
+          reasons: reasons.map((r) => ({
+            id: r.id,
+            title: r.title,
+            text: r.text,
+          })),
+        });
+      } catch (err) {
+        return toolError(err);
+      }
+    }
+  );
+
+  server.registerTool(
+    "report_ad",
+    {
+      title: "Report a Daft listing",
+      description:
+        "Report a listing (POST /old/v1/report). Call get_report_reasons first for reason ids. Auth not required.",
+      inputSchema: z.object({
+        adId: z.number().int().positive().describe("Listing id to report"),
+        reason: z
+          .number()
+          .int()
+          .positive()
+          .describe("Reason id from get_report_reasons"),
+        message: z
+          .string()
+          .optional()
+          .describe("Optional extra detail for the report"),
+        site: z
+          .string()
+          .optional()
+          .describe('Site key, default "daft"'),
+      }),
+    },
+    async ({ adId, reason, message, site }) => {
+      try {
+        await daft.reportAd({
+          site: site ?? "daft",
+          adId,
+          reason,
+          message,
+        });
+        return ok({ ok: true, adId, reason });
+      } catch (err) {
+        return toolError(err);
+      }
+    }
+  );
+
   return server;
 }
