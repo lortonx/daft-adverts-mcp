@@ -179,6 +179,21 @@ function routeFetch(url: string, init?: RequestInit): Promise<Response> {
   if (url.includes("/old/v1/autocomplete")) {
     return Promise.resolve(jsonResponse([mockClassifiedAreas.counties[0]]));
   }
+  if (url.includes("/api/v1/forms/enquiry/")) {
+    return Promise.resolve(
+      jsonResponse({
+        firstName: "Alex",
+        lastName: "M",
+        email: "user@example.com",
+        phone: "+353800000000",
+        message: "Hi, is this still available?",
+        enquired: false,
+      })
+    );
+  }
+  if (url.includes("/old/v4/reply")) {
+    return Promise.resolve(jsonResponse({}));
+  }
   return Promise.resolve(jsonResponse({ error: "not found" }, 404));
 }
 
@@ -227,12 +242,56 @@ describe("daft MCP server", () => {
       "auth_logout",
       "auth_status",
       "autocomplete",
+      "get_enquiry_form",
       "get_property",
       "resolve_area",
       "search_for_rent",
       "search_for_sale",
       "search_sharing",
+      "send_enquiry",
     ]);
+  });
+
+  it("send_enquiry / get_enquiry_form require auth then succeed", async () => {
+    const denied = await client.callTool({
+      name: "send_enquiry",
+      arguments: {
+        adId: 1234567,
+        firstName: "Alex",
+        lastName: "M",
+        email: "user@example.com",
+        message: "Is this still available?",
+      },
+    });
+    expect(denied.isError).toBe(true);
+
+    await client.callTool({
+      name: "auth_login",
+      arguments: { username: "user@example.com", password: "good-pass." },
+    });
+
+    const form = await client.callTool({
+      name: "get_enquiry_form",
+      arguments: { listingId: 1234567 },
+    });
+    expect(form.isError).toBeFalsy();
+    const formBody = textPayload(form) as { firstName: string; email: string };
+    expect(formBody.firstName).toBe("Alex");
+    expect(formBody.email).toBe("user@example.com");
+
+    const sent = await client.callTool({
+      name: "send_enquiry",
+      arguments: {
+        adId: 1234567,
+        firstName: "Alex",
+        lastName: "M",
+        email: "user@example.com",
+        message: "Is this still available?",
+        phone: "+353800000000",
+      },
+    });
+    expect(sent.isError).toBeFalsy();
+    expect(textPayload(sent)).toEqual({ ok: true, adId: 1234567 });
   });
 
   it("auth_login / auth_status / auth_logout manage session without leaking tokens", async () => {

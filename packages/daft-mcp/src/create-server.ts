@@ -723,5 +723,132 @@ export function createServer(daft: DaftApi = createDaftClient()): McpServer {
     }
   );
 
+  server.registerTool(
+    "get_enquiry_form",
+    {
+      title: "Get Daft enquiry form",
+      description:
+        "Fetch saved enquiry fields for a listing (name/email/phone/message defaults). Requires auth_login. Useful before send_enquiry.",
+      annotations: readOnly,
+      inputSchema: z.object({
+        listingId: z
+          .number()
+          .int()
+          .positive()
+          .describe("Listing id (same as get_property id)"),
+      }),
+    },
+    async ({ listingId }) => {
+      if (!daft.getToken()) {
+        return {
+          content: [
+            {
+              type: "text",
+              text: "Not logged in. Call auth_login first (Keycloak password account).",
+            },
+          ],
+          isError: true,
+        };
+      }
+      try {
+        const form = await daft.getSavedReply(listingId);
+        return ok({
+          listingId,
+          firstName: form.firstName,
+          lastName: form.lastName,
+          email: form.email,
+          phone: form.phone,
+          message: form.message,
+          enquired: form.enquired,
+          mortgageApproved: form.mortgageApproved,
+        });
+      } catch (err) {
+        return toolError(err);
+      }
+    }
+  );
+
+  server.registerTool(
+    "send_enquiry",
+    {
+      title: "Send Daft listing enquiry",
+      description:
+        "Reply / enquire on a listing (POST /old/v4/reply). Requires auth_login. Optional reCAPTCHA headers if Daft demands them. Does not return the message body back.",
+      inputSchema: z.object({
+        adId: z.number().int().positive().describe("Listing id to contact"),
+        firstName: z.string().min(1),
+        lastName: z.string().min(1),
+        email: z.string().email(),
+        message: z.string().min(1).describe("Enquiry message text"),
+        phone: z.string().optional(),
+        moveInDate: z
+          .string()
+          .optional()
+          .describe("Optional move-in date (rentals), ISO or API date string"),
+        saveReply: z
+          .boolean()
+          .optional()
+          .describe("Save as default reply for future enquiries"),
+        mortgageApproved: z.boolean().optional(),
+        pets: z.boolean().optional().describe("Rentals: has pets"),
+        adultTenants: z
+          .number()
+          .int()
+          .min(1)
+          .max(20)
+          .optional()
+          .describe("Rentals: number of adult tenants"),
+        recaptchaToken: z
+          .string()
+          .optional()
+          .describe("Optional Recaptcha-Token header value"),
+        recaptchaAction: z
+          .string()
+          .optional()
+          .describe("Optional Recaptcha-Action header value"),
+      }),
+    },
+    async (args) => {
+      if (!daft.getToken()) {
+        return {
+          content: [
+            {
+              type: "text",
+              text: "Not logged in. Call auth_login first (Keycloak password account).",
+            },
+          ],
+          isError: true,
+        };
+      }
+      try {
+        const recaptcha =
+          args.recaptchaToken && args.recaptchaAction
+            ? { token: args.recaptchaToken, action: args.recaptchaAction }
+            : undefined;
+        await daft.sendMessage(
+          {
+            adId: args.adId,
+            firstName: args.firstName,
+            lastName: args.lastName,
+            email: args.email,
+            phone: args.phone,
+            message: args.message,
+            moveInDate: args.moveInDate,
+            saveReply: args.saveReply,
+            mortgageApproved: args.mortgageApproved,
+            pets: args.pets,
+            ...(args.adultTenants !== undefined
+              ? { tenants: { adultTenants: args.adultTenants } }
+              : {}),
+          },
+          recaptcha
+        );
+        return ok({ ok: true, adId: args.adId });
+      } catch (err) {
+        return toolError(err);
+      }
+    }
+  );
+
   return server;
 }
