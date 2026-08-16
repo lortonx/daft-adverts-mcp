@@ -49,12 +49,27 @@ app.all("/mcp/adverts", (request, reply) =>
   advertsHandler(request.raw, reply.raw, request.body)
 );
 
-app.get("/health", async () => ({
-  ok: true,
-  endpoints: ["/mcp/daft", "/mcp/adverts"],
-  oauth: Boolean(oauth),
-  publicUrl: oauth?.publicUrl ?? null,
-}));
+app.get("/health", async () => {
+  const captchaHost = process.env.DAFT_RECAPTCHA_TCP_HOST?.trim() || null;
+  const socks = process.env.DAFT_RECAPTCHA_SOCKS?.trim() || null;
+  return {
+    ok: true,
+    endpoints: ["/mcp/daft", "/mcp/adverts"],
+    oauth: Boolean(oauth),
+    publicUrl: oauth?.publicUrl ?? null,
+    captcha: {
+      configured: Boolean(captchaHost),
+      host: captchaHost,
+      port: Number(process.env.DAFT_RECAPTCHA_TCP_PORT ?? 17373),
+      socks: Boolean(socks),
+      preferShort: (process.env.DAFT_RECAPTCHA_PREFER_SHORT ?? "1") !== "0",
+      sendRetries: Number(process.env.DAFT_RECAPTCHA_SEND_RETRIES ?? 10),
+      httpTimeoutMs: Number(
+        process.env.DAFT_HTTP_TIMEOUT_MS ?? (captchaHost ? 60_000 : 15_000)
+      ),
+    },
+  };
+});
 
 await app.listen({ host, port });
 console.error(`mcp-host listening on http://${host}:${port}`);

@@ -905,6 +905,23 @@ export function createServer(
             isError: true,
           };
         }
+        const msg = err instanceof Error ? err.message : String(err);
+        if (
+          /recaptcha|captcha|DAFT_RECAPTCHA|SOCKS5|TCP timeout|busy/i.test(msg)
+        ) {
+          return {
+            content: [
+              {
+                type: "text",
+                text:
+                  `Captcha mint failed: ${msg}. ` +
+                  `On Coolify check DAFT_RECAPTCHA_TCP_HOST=100.83.27.97 (IP, not MagicDNS), ` +
+                  `phone LSPosed TCP up, and DAFT_RECAPTCHA_SOCKS (set by entrypoint).`,
+              },
+            ],
+            isError: true,
+          };
+        }
         return toolError(err);
       }
     }
