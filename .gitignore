@@ -3,6 +3,7 @@
 .env.*
 !.env.example
 .daft-tokens.json
+.daft-agent-sessions.json
 
 # Node
 node_modules/

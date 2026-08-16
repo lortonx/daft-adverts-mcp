@@ -33,6 +33,8 @@ Env (root `.env` / `.env.example`):
 | `MCP_HOST` | bind address (default `127.0.0.1`) |
 | `MCP_HOST_PORT` | port (default `3100`) |
 | `DAFT_*` | Daft API / tokens — see [`../daft-mcp`](../daft-mcp) |
+| `DAFT_AGENT_SESSIONS_FILE` | JSON DB of per-`agentId` refresh sessions |
+| `DAFT_RECAPTCHA_TCP_HOST` | optional; Tailscale phone (`galaxy-j7`) for auto reCAPTCHA on `send_enquiry` |
 | `ADVERTS_*` | Adverts API keys / tokens — see [`../adverts-mcp`](../adverts-mcp) |
 | `HTTP_PROXY` | optional HTTP proxy for both APIs (Bun); Docker+Tailscale sets this |
 | `TS_AUTHKEY` | Docker: Tailscale auth key |

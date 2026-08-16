@@ -2,6 +2,7 @@ import { createAdvertsClient } from "@adverts-ie/mcp/client";
 import { createServer as createAdvertsServer } from "@adverts-ie/mcp";
 import { createDaftClient } from "@daft-ie/mcp/client";
 import { createServer as createDaftServer } from "@daft-ie/mcp";
+import { AgentSessionManager } from "@daft-ie/mcp/sessions";
 import { createMcpFastifyApp } from "@modelcontextprotocol/fastify";
 import { toNodeHandler } from "@modelcontextprotocol/node";
 import { createMcpHandler } from "@modelcontextprotocol/server";
@@ -15,11 +16,11 @@ const port = Number(
 );
 
 /** Shared clients — auth and state survive across HTTP requests. */
-const daft = createDaftClient();
+const daftSessions = new AgentSessionManager({ anonymous: createDaftClient() });
 const adverts = createAdvertsClient();
 
 const daftHandler = toNodeHandler(
-  createMcpHandler(() => createDaftServer(daft))
+  createMcpHandler(() => createDaftServer(daftSessions))
 );
 const advertsHandler = toNodeHandler(
   createMcpHandler(() => createAdvertsServer(adverts))

@@ -8,11 +8,11 @@ Built with the official [MCP TypeScript SDK v2](https://ts.sdk.modelcontextproto
 
 | Tool | Description |
 |------|-------------|
-| `auth_login` | Optional Keycloak password login (session tokens) |
-| `auth_status` | Logged-in? (no raw tokens) |
-| `auth_logout` | Clear / revoke session |
-| `get_enquiry_form` | Saved enquiry fields for a listing (**auth**) |
-| `send_enquiry` | Send listing enquiry / reply (**auth** + **reCAPTCHA**) |
+| `auth_login` | Handshake: `agentId` + `username` + `password` → store refresh by id |
+| `auth_status` | Session for `agentId`? (no raw tokens) |
+| `auth_logout` | Clear/revoke session for `agentId` |
+| `get_enquiry_form` | Saved enquiry fields (`agentId`; optional re-login) |
+| `send_enquiry` | Send enquiry (`agentId` + reCAPTCHA; optional re-login) |
 | `get_report_reasons` | Reasons for reporting a listing |
 | `report_ad` | Report a listing |
 | `search_for_sale` | Residential for sale |
@@ -22,7 +22,13 @@ Built with the official [MCP TypeScript SDK v2](https://ts.sdk.modelcontextproto
 | `autocomplete` | Area autocomplete |
 | `resolve_area` | County/area → shape ids |
 
-Search / details / report work **without** login. Use `auth_login` then `get_enquiry_form` / `send_enquiry` to contact a seller. `send_enquiry` also needs a valid reCAPTCHA Enterprise token from daft.ie (`Recaptcha-Token` + `Recaptcha-Action`); without it Daft returns 400/403. Google/Apple SSO accounts need a Keycloak password.
+Search / details / report work **without** login. Auth flow:
+
+1. `auth_login({ agentId, username, password })` — handshake; refresh/access saved in `.daft-agent-sessions.json` under `agentId` (password never stored).
+2. Later `get_enquiry_form` / `send_enquiry` with the same `agentId` only.
+3. Optional `username`/`password` on enquiry tools re-handshakes.
+
+`send_enquiry` also needs reCAPTCHA (`recaptchaToken` or `DAFT_RECAPTCHA_TCP_HOST`). Google/Apple SSO accounts need a Keycloak password.
 
 Search tools accept `page` / `pageSize`, optional `enrichTop` (1–3), and `detail`:
 
@@ -55,9 +61,12 @@ See [`../mcp-host`](../mcp-host).
 
 Optional env (see root `.env.example`):
 
-- `DAFT_REFRESH_TOKEN` / `DAFT_ACCESS_TOKEN` — seed tokens
-- After `auth_login` or Keycloak refresh rotation, tokens are saved to **`.daft-tokens.json`** (preferred on next start)
-- `DAFT_TOKEN_FILE` — override path for that file
+- `DAFT_CLIENT_ID` — Keycloak client id (default `daft-android-v2`)
+- `DAFT_AGENT_SESSIONS_FILE` — JSON DB path for per-`agentId` refresh tokens (default `.daft-agent-sessions.json`)
+- **Do not** put Daft username/password in env — agent passes them on `auth_login`
+- `DAFT_RECAPTCHA_TCP_HOST` — Tailscale hostname/IP of phone with LSPosed mint (e.g. `galaxy-j7`)
+- `DAFT_RECAPTCHA_TCP_PORT` — default `17373`
+- `DAFT_RECAPTCHA_ACTION` — default `enquiry_form_submit`
 - `MCP_HOST` / `MCP_HOST_PORT` — Fastify bind (host package)
 
 Logs for stdio go to **stderr** only (stdout is JSON-RPC).

@@ -1,4 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { Client, StreamableHTTPClientTransport } from "@modelcontextprotocol/client";
 import { createMcpHandler } from "@modelcontextprotocol/server";
 import { DaftApi } from "@daft-ie/api";
@@ -8,6 +11,7 @@ import type {
   SearchResponse,
 } from "@daft-ie/api";
 import { createServer } from "../src/create-server";
+import { AgentSessionManager } from "../src/agent-sessions";
 
 process.env.DAFT_CLIENT_ID ??= "daft-android-v2";
 
@@ -214,16 +218,26 @@ function textPayload(result: { content?: unknown }): unknown {
 describe("daft MCP server", () => {
   let client: Client;
   let handler: ReturnType<typeof createMcpHandler>;
+  let sessionsDir: string;
+  let prevSessionsFile: string | undefined;
 
   beforeEach(async () => {
+    sessionsDir = mkdtempSync(join(tmpdir(), "daft-mcp-sess-"));
+    prevSessionsFile = process.env.DAFT_AGENT_SESSIONS_FILE;
+    process.env.DAFT_AGENT_SESSIONS_FILE = join(sessionsDir, "sessions.json");
+
     const fetchFn = mock((url: string, init?: RequestInit) => routeFetch(url, init));
     const daft = new DaftApi({
       fetchFn: fetchFn as unknown as typeof fetch,
       platform: "android",
       appVersion: "9.8.1",
     });
+    const sessions = new AgentSessionManager({
+      anonymous: daft,
+      fetchFn: fetchFn as unknown as typeof fetch,
+    });
 
-    handler = createMcpHandler(() => createServer(daft));
+    handler = createMcpHandler(() => createServer(sessions));
     const transport = new StreamableHTTPClientTransport(
       new URL("http://test.local/mcp"),
       {
@@ -240,6 +254,13 @@ describe("daft MCP server", () => {
   afterEach(async () => {
     await client.close();
     await handler.close();
+    if (prevSessionsFile === undefined) delete process.env.DAFT_AGENT_SESSIONS_FILE;
+    else process.env.DAFT_AGENT_SESSIONS_FILE = prevSessionsFile;
+    try {
+      rmSync(sessionsDir, { recursive: true, force: true });
+    } catch {
+      /* ignore */
+    }
   });
 
   it("lists the public tools including auth", async () => {
@@ -288,10 +309,11 @@ describe("daft MCP server", () => {
     });
   });
 
-  it("send_enquiry / get_enquiry_form require auth then succeed", async () => {
+  it("agentId handshake then enquiry without password", async () => {
     const denied = await client.callTool({
       name: "send_enquiry",
       arguments: {
+        agentId: "bot-1",
         adId: 1234567,
         firstName: "Alex",
         lastName: "M",
@@ -303,14 +325,20 @@ describe("daft MCP server", () => {
     });
     expect(denied.isError).toBe(true);
 
-    await client.callTool({
+    const login = await client.callTool({
       name: "auth_login",
-      arguments: { username: "user@example.com", password: "good-pass." },
+      arguments: {
+        agentId: "bot-1",
+        username: "user@example.com",
+        password: "good-pass.",
+      },
     });
+    expect(login.isError).toBeFalsy();
+    expect((textPayload(login) as { agentId: string }).agentId).toBe("bot-1");
 
     const form = await client.callTool({
       name: "get_enquiry_form",
-      arguments: { listingId: 1234567 },
+      arguments: { agentId: "bot-1", listingId: 1234567 },
     });
     expect(form.isError).toBeFalsy();
     const formBody = textPayload(form) as { firstName: string; email: string };
@@ -320,6 +348,7 @@ describe("daft MCP server", () => {
     const sent = await client.callTool({
       name: "send_enquiry",
       arguments: {
+        agentId: "bot-1",
         adId: 1234567,
         firstName: "Alex",
         lastName: "M",
@@ -331,23 +360,35 @@ describe("daft MCP server", () => {
       },
     });
     expect(sent.isError).toBeFalsy();
-    expect(textPayload(sent)).toEqual({ ok: true, adId: 1234567 });
+    expect(textPayload(sent)).toEqual({
+      ok: true,
+      adId: 1234567,
+      agentId: "bot-1",
+    });
   });
 
   it("auth_login / auth_status / auth_logout manage session without leaking tokens", async () => {
     const before = textPayload(
-      await client.callTool({ name: "auth_status", arguments: {} })
+      await client.callTool({
+        name: "auth_status",
+        arguments: { agentId: "bot-1" },
+      })
     ) as { loggedIn: boolean };
     expect(before.loggedIn).toBe(false);
 
     const login = await client.callTool({
       name: "auth_login",
-      arguments: { username: "user@example.com", password: "good-pass." },
+      arguments: {
+        agentId: "bot-1",
+        username: "user@example.com",
+        password: "good-pass.",
+      },
     });
     expect(login.isError).toBeFalsy();
     const loggedIn = textPayload(login) as Record<string, unknown>;
     expect(loggedIn.ok).toBe(true);
     expect(loggedIn.loggedIn).toBe(true);
+    expect(loggedIn.agentId).toBe("bot-1");
     expect(loggedIn.username).toBe("us***@e***.com");
     expect(loggedIn.preferredUsername).toBe("te***r");
     expect(loggedIn.userId).toBe("5821124");
@@ -358,13 +399,19 @@ describe("daft MCP server", () => {
     expect(JSON.stringify(loggedIn)).not.toContain("testuser");
 
     const status = textPayload(
-      await client.callTool({ name: "auth_status", arguments: {} })
+      await client.callTool({
+        name: "auth_status",
+        arguments: { agentId: "bot-1" },
+      })
     ) as { loggedIn: boolean; hasRefreshToken: boolean };
     expect(status.loggedIn).toBe(true);
     expect(status.hasRefreshToken).toBe(true);
 
     const logout = textPayload(
-      await client.callTool({ name: "auth_logout", arguments: {} })
+      await client.callTool({
+        name: "auth_logout",
+        arguments: { agentId: "bot-1" },
+      })
     ) as { loggedIn: boolean; ok: boolean };
     expect(logout.ok).toBe(true);
     expect(logout.loggedIn).toBe(false);
@@ -373,7 +420,11 @@ describe("daft MCP server", () => {
   it("auth_login surfaces invalid credentials", async () => {
     const result = await client.callTool({
       name: "auth_login",
-      arguments: { username: "user@example.com", password: "wrong" },
+      arguments: {
+        agentId: "bot-1",
+        username: "user@example.com",
+        password: "wrong",
+      },
     });
     expect(result.isError).toBe(true);
     const text = (result.content as { type: string; text: string }[])[0]?.text;

@@ -9,6 +9,12 @@ import {
 import { McpServer } from "@modelcontextprotocol/server";
 import * as z from "zod/v4";
 import { createDaftClient } from "./client";
+import { AgentSessionManager } from "./agent-sessions";
+import {
+  DEFAULT_RECAPTCHA_ACTION,
+  fetchRecaptchaToken,
+  recaptchaTcpConfigured,
+} from "./recaptcha-tcp";
 
 /** CDN/UI/ads junk — always dropped, including on detail=full. */
 const DENY = new Set([
@@ -521,10 +527,16 @@ function authSnapshot(daft: DaftApi, username?: string) {
   };
 }
 
-/** Build the Daft MCP server with public read-only tools + optional auth. */
-export function createServer(daft: DaftApi = createDaftClient()): McpServer {
+/** Build the Daft MCP server with public read-only tools + per-agent auth sessions. */
+export function createServer(
+  daftOrSessions: DaftApi | AgentSessionManager = createDaftClient()
+): McpServer {
+  const sessions =
+    daftOrSessions instanceof AgentSessionManager
+      ? daftOrSessions
+      : new AgentSessionManager(daftOrSessions);
+  const daft = sessions.anonymous;
   const server = new McpServer({ name: "daft", version: "1.0.0" });
-  let sessionUsername: string | undefined;
 
   const runSearch = async (
     search: (opts: SearchOptions) => Promise<SearchResponse>,
@@ -546,27 +558,55 @@ export function createServer(daft: DaftApi = createDaftClient()): McpServer {
   const searchBlurb =
     "detail defaults to standard (compact card). Use minimal for lists, full for raw API. enrichTop (1–3) merges description/address/features into top hits.";
 
+  const agentIdField = z
+    .string()
+    .min(1)
+    .describe(
+      "Stable agent/session id (handshake key). Refresh tokens are stored in the JSON session DB under this id."
+    );
+
+  const optionalCredentials = {
+    username: z
+      .string()
+      .min(1)
+      .optional()
+      .describe(
+        "Daft email/username — required for first login or re-login; omit when a session already exists for agentId"
+      ),
+    password: z
+      .string()
+      .min(1)
+      .optional()
+      .describe(
+        "Daft password — required for first login or re-login; never stored; omit when session exists"
+      ),
+  };
+
   server.registerTool(
     "auth_login",
     {
       title: "Log in to Daft",
       description:
-        "Optional Keycloak password login for authenticated actions (e.g. enquiries). Most search tools work without login. Google/Apple SSO accounts cannot use this — they need a Keycloak password. Does not return raw tokens.",
+        "Handshake: bind agentId to a Daft Keycloak password login. Persists refresh/access tokens in the JSON session DB keyed by agentId (password is never stored). Later tools only need agentId. Google/Apple SSO accounts need a Keycloak password. Does not return raw tokens.",
       inputSchema: z.object({
+        agentId: agentIdField,
         username: z
           .string()
           .min(1)
-          .describe("Daft email or username"),
-        password: z.string().min(1).describe("Daft account password"),
+          .describe("Daft email or username (agent-supplied; not from env)"),
+        password: z
+          .string()
+          .min(1)
+          .describe("Daft account password (agent-supplied; not from env)"),
       }),
     },
-    async ({ username, password }) => {
+    async ({ agentId, username, password }) => {
       try {
-        await daft.login(username, password);
-        sessionUsername = username;
+        const client = await sessions.login(agentId, username, password);
         return ok({
           ok: true,
-          ...authSnapshot(daft, sessionUsername),
+          agentId: agentId.trim(),
+          ...authSnapshot(client, username),
         });
       } catch (err) {
         return toolError(err);
@@ -579,11 +619,21 @@ export function createServer(daft: DaftApi = createDaftClient()): McpServer {
     {
       title: "Daft auth status",
       description:
-        "Whether this MCP session has Daft tokens (from auth_login or env). Never returns raw tokens.",
+        "Whether agentId has a stored/in-memory Daft session. Never returns raw tokens.",
       annotations: readOnly,
-      inputSchema: z.object({}),
+      inputSchema: z.object({ agentId: agentIdField }),
     },
-    async () => ok(authSnapshot(daft, sessionUsername))
+    async ({ agentId }) => {
+      try {
+        const client = sessions.clientFor(agentId);
+        return ok({
+          agentId: agentId.trim(),
+          ...authSnapshot(client, sessions.getUsername(agentId)),
+        });
+      } catch (err) {
+        return toolError(err);
+      }
+    }
   );
 
   server.registerTool(
@@ -591,26 +641,20 @@ export function createServer(daft: DaftApi = createDaftClient()): McpServer {
     {
       title: "Log out of Daft",
       description:
-        "Revoke the Keycloak session when possible and clear tokens from this MCP process.",
-      inputSchema: z.object({}),
+        "Revoke Keycloak session when possible and delete this agentId from the JSON session DB.",
+      inputSchema: z.object({ agentId: agentIdField }),
     },
-    async () => {
+    async ({ agentId }) => {
       try {
-        const refresh = daft.getRefreshToken();
-        if (refresh) {
-          try {
-            await daft.logout(refresh, sessionUsername);
-          } catch {
-            daft.clearTokens();
-          }
-        } else {
-          daft.clearTokens();
-        }
-        sessionUsername = undefined;
-        return ok({ ok: true, ...authSnapshot(daft) });
+        await sessions.logout(agentId);
+        return ok({
+          ok: true,
+          agentId: agentId.trim(),
+          loggedIn: false,
+          hasAccessToken: false,
+          hasRefreshToken: false,
+        });
       } catch (err) {
-        daft.clearTokens();
-        sessionUsername = undefined;
         return toolError(err);
       }
     }
@@ -728,9 +772,11 @@ export function createServer(daft: DaftApi = createDaftClient()): McpServer {
     {
       title: "Get Daft enquiry form",
       description:
-        "Fetch saved enquiry fields for a listing (name/email/phone/message defaults). Requires auth_login. Useful before send_enquiry.",
+        "Fetch saved enquiry fields for a listing. Pass agentId (after auth_login). Optional username+password re-handshakes. Useful before send_enquiry.",
       annotations: readOnly,
       inputSchema: z.object({
+        agentId: agentIdField,
+        ...optionalCredentials,
         listingId: z
           .number()
           .int()
@@ -738,20 +784,13 @@ export function createServer(daft: DaftApi = createDaftClient()): McpServer {
           .describe("Listing id (same as get_property id)"),
       }),
     },
-    async ({ listingId }) => {
-      if (!daft.getToken()) {
-        return {
-          content: [
-            {
-              type: "text",
-              text: "Not logged in. Call auth_login first (Keycloak password account).",
-            },
-          ],
-          isError: true,
-        };
-      }
+    async ({ listingId, agentId, username, password }) => {
       try {
-        const form = await daft.getSavedReply(listingId);
+        const client = await sessions.requireSession(
+          agentId,
+          username && password ? { username, password } : undefined
+        );
+        const form = await client.getSavedReply(listingId);
         return ok({
           listingId,
           firstName: form.firstName,
@@ -773,8 +812,10 @@ export function createServer(daft: DaftApi = createDaftClient()): McpServer {
     {
       title: "Send Daft listing enquiry",
       description:
-        "Reply / enquire on a listing (POST /old/v4/reply). Requires auth_login AND a valid reCAPTCHA Enterprise token (Recaptcha-Token + Recaptcha-Action). Without captcha Daft returns HTTP 400; invalid/headless tokens return HTTP 403. Prefer get_enquiry_form first for name/email/phone defaults. Web sitekey on daft.ie: 6LeVIV8lAAAAAIV3iAExz1eHwUtwU3a0OlHfjsmO.",
+        "Reply / enquire on a listing (POST /old/v4/reply). Pass agentId (after auth_login). Optional username+password re-handshakes. reCAPTCHA: recaptchaToken or DAFT_RECAPTCHA_TCP_HOST. Prefer get_enquiry_form first for name/email/phone defaults.",
       inputSchema: z.object({
+        agentId: agentIdField,
+        ...optionalCredentials,
         adId: z.number().int().positive().describe("Listing id to contact"),
         firstName: z.string().min(1).optional(),
         lastName: z.string().min(1).optional(),
@@ -807,37 +848,34 @@ export function createServer(daft: DaftApi = createDaftClient()): McpServer {
         recaptchaToken: z
           .string()
           .min(1)
+          .optional()
           .describe(
-            "Required. Recaptcha-Token from grecaptcha.enterprise.execute on daft.ie"
+            "Optional if DAFT_RECAPTCHA_TCP_HOST is set. Recaptcha-Token from phone LSPosed mint or grecaptcha.enterprise.execute"
           ),
         recaptchaAction: z
           .string()
           .min(1)
+          .optional()
           .describe(
-            "Required. Recaptcha-Action: Android app uses enquiry_form_submit; web often uses enquiry"
+            "Recaptcha-Action (default enquiry_form_submit for Android / TCP mint; web often uses enquiry)"
           ),
       }),
     },
     async (args) => {
-      if (!daft.getToken()) {
-        return {
-          content: [
-            {
-              type: "text",
-              text: "Not logged in. Call auth_login first (Keycloak password account).",
-            },
-          ],
-          isError: true,
-        };
-      }
       try {
+        const client = await sessions.requireSession(
+          args.agentId,
+          args.username && args.password
+            ? { username: args.username, password: args.password }
+            : undefined
+        );
         const needForm =
           args.useSavedForm === true ||
           !args.firstName ||
           !args.lastName ||
           !args.email;
         const form = needForm
-          ? await daft.getSavedReply(args.adId)
+          ? await client.getSavedReply(args.adId)
           : null;
         const firstName = (args.firstName ?? form?.firstName ?? "").trim();
         const lastName = (args.lastName ?? form?.lastName ?? "").trim();
@@ -854,7 +892,48 @@ export function createServer(daft: DaftApi = createDaftClient()): McpServer {
             isError: true,
           };
         }
-        await daft.sendMessage(
+
+        let recaptchaToken = args.recaptchaToken?.trim();
+        let recaptchaAction =
+          args.recaptchaAction?.trim()
+          || process.env.DAFT_RECAPTCHA_ACTION?.trim()
+          || DEFAULT_RECAPTCHA_ACTION;
+
+        if (!recaptchaToken) {
+          if (!recaptchaTcpConfigured()) {
+            return {
+              content: [
+                {
+                  type: "text",
+                  text:
+                    "Missing recaptchaToken. Pass it explicitly, or set DAFT_RECAPTCHA_TCP_HOST to the phone Tailscale name/IP (e.g. galaxy-j7) running the LSPosed TCP mint on :17373.",
+                },
+              ],
+              isError: true,
+            };
+          }
+          try {
+            const minted = await fetchRecaptchaToken({
+              action: recaptchaAction,
+            });
+            recaptchaToken = minted.token;
+            recaptchaAction = minted.action;
+          } catch (mintErr) {
+            const msg =
+              mintErr instanceof Error ? mintErr.message : String(mintErr);
+            return {
+              content: [
+                {
+                  type: "text",
+                  text: `Failed to mint reCAPTCHA via TCP (${process.env.DAFT_RECAPTCHA_TCP_HOST}): ${msg}`,
+                },
+              ],
+              isError: true,
+            };
+          }
+        }
+
+        await client.sendMessage(
           {
             adId: args.adId,
             firstName,
@@ -873,9 +952,9 @@ export function createServer(daft: DaftApi = createDaftClient()): McpServer {
               ? { propertyToSellDetails: form.propertyToSellDetails }
               : {}),
           },
-          { token: args.recaptchaToken, action: args.recaptchaAction }
+          { token: recaptchaToken, action: recaptchaAction }
         );
-        return ok({ ok: true, adId: args.adId });
+        return ok({ ok: true, adId: args.adId, agentId: args.agentId.trim() });
       } catch (err) {
         if (err instanceof ApiError && (err.status === 400 || err.status === 403)) {
           return {

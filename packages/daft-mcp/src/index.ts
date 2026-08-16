@@ -1,16 +1,16 @@
 import { serveStdio } from "@modelcontextprotocol/server/stdio";
+import { AgentSessionManager } from "./agent-sessions";
 import { bootMcpEnv, monorepoEnvPath } from "./boot";
 import { createDaftClient } from "./client";
 import { createServer } from "./create-server";
 
 bootMcpEnv(monorepoEnvPath());
 
-// One client for the process so auth_login tokens survive across tool calls.
-const daft = createDaftClient();
+const sessions = new AgentSessionManager({ anonymous: createDaftClient() });
 
 // Factory must ignore the request context — never pass createServer directly,
 // or serveStdio will inject ctx as the first argument (mistaken for DaftApi).
-const handle = serveStdio(() => createServer(daft));
+const handle = serveStdio(() => createServer(sessions));
 
 process.on("SIGINT", () => {
   void handle.close();
