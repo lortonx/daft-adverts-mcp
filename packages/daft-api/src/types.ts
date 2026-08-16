@@ -492,7 +492,7 @@ export interface DaftApiOptions {
   platform?: "web" | "android";
   /** App version (default: "9.8.1") */
   appVersion?: string;
-  /** Android OS version used in the user-agent when platform is "android". */
+  /** Android OS version in User-Agent when platform is "android" (default: "15"). */
   osVersion?: string;
   /** Bearer token used to authenticate requests (optional). */
   token?: string;

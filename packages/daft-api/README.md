@@ -53,7 +53,7 @@ for (const { listing } of results.listings) {
 const daft = new DaftApi({
   baseUrl: "https://gateway.daft.ie", // default
   authUrl: "https://auth.daft.ie", // default
-  platform: "android", // sets User-Agent to daft/9.8.1/AndroidVersion/11
+  platform: "android", // sets User-Agent to daft/9.8.1/AndroidVersion/15
   appVersion: "9.8.1",
   timeout: 10000,
   headers: { "x-custom": "value" },
@@ -66,7 +66,7 @@ Env (monorepo `.env`): `DAFT_CLIENT_ID`, `DAFT_REFRESH_TOKEN`, `DAFT_ACCESS_TOKE
 
 Optional outbound proxy: `HTTP_PROXY` (HTTP URL; Bun). See root README.
 
-reCAPTCHA for `sendMessage`: set `DAFT_RECAPTCHA_TCP_HOST` to the phone Tailscale **IP** (e.g. `100.83.27.97`; MagicDNS is flaky via Docker SOCKS), or pass `{ token }`, or inject `mintRecaptchaToken`. Action is always `enquiry_form_submit`. Gateway expects Pascal-Case `Recaptcha-Token` / `Recaptcha-Action` (lowercase → empty-body 403). MCP callers never see the token. Skip listings with `enquired: true` and retry another ad on 403.
+reCAPTCHA for `sendMessage`: set `DAFT_RECAPTCHA_TCP_HOST` to the phone Tailscale **IP** (e.g. `100.83.27.97`; MagicDNS is flaky via Docker SOCKS), or pass `{ token }`, or inject `mintRecaptchaToken`. Action is always `enquiry_form_submit`. Gateway expects Pascal-Case `Recaptcha-Token` / `Recaptcha-Action` (lowercase → empty-body 403). Auto-mint prefers short tokens (`DAFT_RECAPTCHA_PREFER_SHORT`, default on) and remints on HTTP 403 up to `DAFT_RECAPTCHA_SEND_RETRIES` (default 10). MCP callers never see the token. Skip listings with `enquired: true` and retry another ad if still 403 after retries.
 
 ## Search
 

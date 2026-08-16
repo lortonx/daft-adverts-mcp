@@ -15,6 +15,15 @@ import { connect, type Socket } from "node:net";
 export const DEFAULT_RECAPTCHA_TCP_PORT = 17373;
 /** Hardcoded Recaptcha-Action for Daft Android enquiry. */
 export const DEFAULT_RECAPTCHA_ACTION = "enquiry_form_submit";
+/**
+ * Prefer tokens shorter than this when minting (probe: short ≈2.6k succeed more often than ≈4.5k).
+ * Override with `DAFT_RECAPTCHA_PREFERRED_MAX_LEN`.
+ */
+export const PREFERRED_RECAPTCHA_MAX_LEN = 3200;
+/** Default mint attempts while hunting a short token (`DAFT_RECAPTCHA_MINT_TRIES`). */
+export const DEFAULT_RECAPTCHA_MINT_TRIES = 8;
+/** Default send attempts on HTTP 403 with a fresh mint (`DAFT_RECAPTCHA_SEND_RETRIES`). */
+export const DEFAULT_RECAPTCHA_SEND_RETRIES = 10;
 
 export type RecaptchaTcpOptions = {
   host?: string;
@@ -78,6 +87,65 @@ export async function fetchRecaptchaToken(
   throw new Error(
     line.startsWith("ERR ") ? line.slice(4) : line || "empty response"
   );
+}
+
+function envFlagTrue(value: string | undefined, defaultTrue: boolean): boolean {
+  if (value === undefined || value === "") return defaultTrue;
+  const v = value.trim().toLowerCase();
+  return !(v === "0" || v === "false" || v === "no" || v === "off");
+}
+
+/** Whether to prefer short tokens (`DAFT_RECAPTCHA_PREFER_SHORT`, default on). */
+export function preferShortRecaptcha(
+  env: NodeJS.ProcessEnv = process.env
+): boolean {
+  return envFlagTrue(env.DAFT_RECAPTCHA_PREFER_SHORT, true);
+}
+
+export function preferredRecaptchaMaxLen(
+  env: NodeJS.ProcessEnv = process.env
+): number {
+  const n = Number(env.DAFT_RECAPTCHA_PREFERRED_MAX_LEN ?? PREFERRED_RECAPTCHA_MAX_LEN);
+  return Number.isFinite(n) && n > 0 ? n : PREFERRED_RECAPTCHA_MAX_LEN;
+}
+
+export function recaptchaMintTries(
+  env: NodeJS.ProcessEnv = process.env
+): number {
+  const n = Number(env.DAFT_RECAPTCHA_MINT_TRIES ?? DEFAULT_RECAPTCHA_MINT_TRIES);
+  return Number.isFinite(n) && n >= 1 ? Math.floor(n) : DEFAULT_RECAPTCHA_MINT_TRIES;
+}
+
+export function recaptchaSendRetries(
+  env: NodeJS.ProcessEnv = process.env
+): number {
+  const n = Number(
+    env.DAFT_RECAPTCHA_SEND_RETRIES ?? DEFAULT_RECAPTCHA_SEND_RETRIES
+  );
+  return Number.isFinite(n) && n >= 1
+    ? Math.floor(n)
+    : DEFAULT_RECAPTCHA_SEND_RETRIES;
+}
+
+/**
+ * Mint until token length &lt; preferred max (short bucket), or tries exhausted
+ * (returns last mint). Set `DAFT_RECAPTCHA_PREFER_SHORT=0` to mint once.
+ */
+export async function fetchRecaptchaTokenPreferShort(
+  overrides: RecaptchaTcpOptions = {},
+  env: NodeJS.ProcessEnv = process.env
+): Promise<RecaptchaMintResult> {
+  if (!preferShortRecaptcha(env)) {
+    return fetchRecaptchaToken(overrides, env);
+  }
+  const maxLen = preferredRecaptchaMaxLen(env);
+  const tries = recaptchaMintTries(env);
+  let last: RecaptchaMintResult | null = null;
+  for (let i = 0; i < tries; i++) {
+    last = await fetchRecaptchaToken(overrides, env);
+    if (last.token.length < maxLen) return last;
+  }
+  return last!;
 }
 
 function tcpLine(

@@ -8,6 +8,10 @@
 import {
   DEFAULT_RECAPTCHA_ACTION,
   fetchRecaptchaToken,
+  preferShortRecaptcha,
+  preferredRecaptchaMaxLen,
+  recaptchaMintTries,
+  recaptchaSendRetries,
   recaptchaTcpConfigured,
 } from "./recaptcha-tcp";
 import type {
@@ -248,7 +252,7 @@ export class DaftApi {
 
     this.userAgent =
       platform === "android"
-        ? `daft/${this.appVersion}/AndroidVersion/${options.osVersion ?? "11"}`
+        ? `daft/${this.appVersion}/AndroidVersion/${options.osVersion ?? "15"}`
         : options.userAgent ??
           "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36";
 
@@ -667,24 +671,46 @@ export class DaftApi {
    *
    * Header names must match the Android app (`Recaptcha-Token` / `Recaptcha-Action`).
    * Lowercase `recaptcha-*` is rejected with empty-body HTTP 403.
+   *
+   * Auto-mint path (no explicit token): prefers short tokens
+   * (`DAFT_RECAPTCHA_PREFER_SHORT`, `DAFT_RECAPTCHA_MINT_TRIES`) and remints on
+   * HTTP 403 up to `DAFT_RECAPTCHA_SEND_RETRIES` attempts.
    */
   async sendMessage(
     body: AdReplyMessageBody,
     recaptcha?: { token: string; action?: string }
   ): Promise<void> {
-    const minted = await this.resolveRecaptcha(recaptcha);
-    return this.fetchJson<void>(
-      `${this.base("common")}${DaftApi.ENDPOINTS.POST_AD_MESSAGE}`,
-      "POST",
-      {
-        tcAccepted: true,
-        ...body,
-      },
-      {
-        "Recaptcha-Token": minted.token,
-        "Recaptcha-Action": minted.action,
+    const explicit = Boolean(recaptcha?.token?.trim());
+    const maxAttempts = explicit ? 1 : recaptchaSendRetries();
+    let lastError: unknown;
+
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      const minted = await this.resolveRecaptcha(
+        explicit ? recaptcha : undefined
+      );
+      try {
+        return await this.fetchJson<void>(
+          `${this.base("common")}${DaftApi.ENDPOINTS.POST_AD_MESSAGE}`,
+          "POST",
+          {
+            tcAccepted: true,
+            ...body,
+          },
+          {
+            "Recaptcha-Token": minted.token,
+            "Recaptcha-Action": minted.action,
+          }
+        );
+      } catch (err) {
+        lastError = err;
+        const is403 = err instanceof ApiError && err.status === 403;
+        if (!is403 || explicit || attempt === maxAttempts) throw err;
       }
-    );
+    }
+
+    throw lastError instanceof Error
+      ? lastError
+      : new Error(String(lastError ?? "sendMessage failed"));
   }
 
   private async resolveRecaptcha(
@@ -696,6 +722,23 @@ export class DaftApi {
         action: DEFAULT_RECAPTCHA_ACTION,
       };
     }
+
+    const preferShort = preferShortRecaptcha();
+    const maxLen = preferredRecaptchaMaxLen();
+    const tries = preferShort ? recaptchaMintTries() : 1;
+    let last: { token: string; action: string } | null = null;
+
+    for (let i = 0; i < tries; i++) {
+      last = await this.mintRecaptchaOnce();
+      if (!preferShort || last.token.length < maxLen) return last;
+    }
+    return last!;
+  }
+
+  private async mintRecaptchaOnce(): Promise<{
+    token: string;
+    action: string;
+  }> {
     if (this.mintRecaptchaToken) {
       const minted = await this.mintRecaptchaToken();
       return { token: minted.token, action: DEFAULT_RECAPTCHA_ACTION };
