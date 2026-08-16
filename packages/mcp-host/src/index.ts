@@ -5,6 +5,8 @@ import { createServer as createDaftServer } from "@daft-ie/mcp";
 import { createMcpFastifyApp } from "@modelcontextprotocol/fastify";
 import { toNodeHandler } from "@modelcontextprotocol/node";
 import { createMcpHandler } from "@modelcontextprotocol/server";
+import { loadOAuthConfigFromEnv, registerOAuth } from "./oauth/routes.ts";
+import { OAuthStore } from "./oauth/store.ts";
 
 // Coolify sets HOST/PORT; local/Docker may use MCP_HOST / MCP_HOST_PORT.
 const host = process.env.MCP_HOST ?? process.env.HOST ?? "127.0.0.1";
@@ -25,6 +27,19 @@ const advertsHandler = toNodeHandler(
 
 const app = createMcpFastifyApp({ host });
 
+const oauthStore = new OAuthStore(process.env.MCP_OAUTH_STORE ?? null);
+const oauth = loadOAuthConfigFromEnv(oauthStore);
+if (oauth) {
+  registerOAuth(app, oauth);
+  console.error(`OAuth enabled for ${oauth.publicUrl}`);
+  console.error(
+    `  static client_id=${process.env.MCP_OAUTH_CLIENT_ID ?? "claude-mcp"} (paste in Claude Advanced if DCR fails)`
+  );
+  if (oauth.apiKeys.size) {
+    console.error(`  MCP_API_KEYS: ${oauth.apiKeys.size} key(s) accepted as Bearer`);
+  }
+}
+
 app.all("/mcp/daft", (request, reply) =>
   daftHandler(request.raw, reply.raw, request.body)
 );
@@ -36,6 +51,8 @@ app.all("/mcp/adverts", (request, reply) =>
 app.get("/health", async () => ({
   ok: true,
   endpoints: ["/mcp/daft", "/mcp/adverts"],
+  oauth: Boolean(oauth),
+  publicUrl: oauth?.publicUrl ?? null,
 }));
 
 await app.listen({ host, port });

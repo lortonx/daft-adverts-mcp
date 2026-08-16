@@ -297,6 +297,8 @@ describe("daft MCP server", () => {
         lastName: "M",
         email: "user@example.com",
         message: "Is this still available?",
+        recaptchaToken: "test-token",
+        recaptchaAction: "enquiry",
       },
     });
     expect(denied.isError).toBe(true);
@@ -324,6 +326,8 @@ describe("daft MCP server", () => {
         email: "user@example.com",
         message: "Is this still available?",
         phone: "+353800000000",
+        recaptchaToken: "test-token",
+        recaptchaAction: "enquiry",
       },
     });
     expect(sent.isError).toBeFalsy();

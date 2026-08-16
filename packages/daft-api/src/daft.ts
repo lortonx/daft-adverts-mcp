@@ -649,23 +649,21 @@ export class DaftApi {
 
   /**
    * Send a reply/enquiry message for a listing.
-   * May require `Recaptcha-Token` and `Recaptcha-Action` headers.
+   * Requires `Recaptcha-Token` + `Recaptcha-Action` (reCAPTCHA Enterprise).
+   * Missing headers → HTTP 400; invalid/low-score tokens → HTTP 403.
    */
   async sendMessage(
     body: AdReplyMessageBody,
-    recaptcha?: { token: string; action: string }
+    recaptcha: { token: string; action: string }
   ): Promise<void> {
-    const headers = recaptcha
-      ? {
-          "Recaptcha-Token": recaptcha.token,
-          "Recaptcha-Action": recaptcha.action,
-        }
-      : undefined;
     return this.fetchJson<void>(
       `${this.base("common")}${DaftApi.ENDPOINTS.POST_AD_MESSAGE}`,
       "POST",
       body,
-      headers
+      {
+        "Recaptcha-Token": recaptcha.token,
+        "Recaptcha-Action": recaptcha.action,
+      }
     );
   }
 

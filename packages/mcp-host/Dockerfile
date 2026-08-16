@@ -34,7 +34,7 @@ COPY --from=tailscale/tailscale:stable /usr/local/bin/tailscaled /usr/local/bin/
 COPY --from=tailscale/tailscale:stable /usr/local/bin/tailscale /usr/local/bin/tailscale
 COPY packages/mcp-host/docker-entrypoint.sh /docker-entrypoint.sh
 RUN chmod +x /docker-entrypoint.sh \
-  && mkdir -p /var/run/tailscale /var/lib/tailscale
+  && mkdir -p /var/run/tailscale /var/lib/tailscale /data
 
 ENV MCP_HOST=0.0.0.0
 ENV HOST=0.0.0.0

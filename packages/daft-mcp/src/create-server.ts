@@ -773,12 +773,12 @@ export function createServer(daft: DaftApi = createDaftClient()): McpServer {
     {
       title: "Send Daft listing enquiry",
       description:
-        "Reply / enquire on a listing (POST /old/v4/reply). Requires auth_login. Optional reCAPTCHA headers if Daft demands them. Does not return the message body back.",
+        "Reply / enquire on a listing (POST /old/v4/reply). Requires auth_login AND a valid reCAPTCHA Enterprise token (Recaptcha-Token + Recaptcha-Action). Without captcha Daft returns HTTP 400; invalid/headless tokens return HTTP 403. Prefer get_enquiry_form first for name/email/phone defaults. Web sitekey on daft.ie: 6LeVIV8lAAAAAIV3iAExz1eHwUtwU3a0OlHfjsmO.",
       inputSchema: z.object({
         adId: z.number().int().positive().describe("Listing id to contact"),
-        firstName: z.string().min(1),
-        lastName: z.string().min(1),
-        email: z.string().email(),
+        firstName: z.string().min(1).optional(),
+        lastName: z.string().min(1).optional(),
+        email: z.string().email().optional(),
         message: z.string().min(1).describe("Enquiry message text"),
         phone: z.string().optional(),
         moveInDate: z
@@ -798,14 +798,24 @@ export function createServer(daft: DaftApi = createDaftClient()): McpServer {
           .max(20)
           .optional()
           .describe("Rentals: number of adult tenants"),
+        useSavedForm: z
+          .boolean()
+          .optional()
+          .describe(
+            "If true (default when name/email omitted), fill firstName/lastName/email/phone from get_enquiry_form"
+          ),
         recaptchaToken: z
           .string()
-          .optional()
-          .describe("Optional Recaptcha-Token header value"),
+          .min(1)
+          .describe(
+            "Required. Recaptcha-Token from grecaptcha.enterprise.execute on daft.ie"
+          ),
         recaptchaAction: z
           .string()
-          .optional()
-          .describe("Optional Recaptcha-Action header value"),
+          .min(1)
+          .describe(
+            "Required. Recaptcha-Action: Android app uses enquiry_form_submit; web often uses enquiry"
+          ),
       }),
     },
     async (args) => {
@@ -821,17 +831,36 @@ export function createServer(daft: DaftApi = createDaftClient()): McpServer {
         };
       }
       try {
-        const recaptcha =
-          args.recaptchaToken && args.recaptchaAction
-            ? { token: args.recaptchaToken, action: args.recaptchaAction }
-            : undefined;
+        const needForm =
+          args.useSavedForm === true ||
+          !args.firstName ||
+          !args.lastName ||
+          !args.email;
+        const form = needForm
+          ? await daft.getSavedReply(args.adId)
+          : null;
+        const firstName = (args.firstName ?? form?.firstName ?? "").trim();
+        const lastName = (args.lastName ?? form?.lastName ?? "").trim();
+        const email = args.email ?? form?.email ?? "";
+        const phone = args.phone ?? form?.phone;
+        if (!firstName || !lastName || !email) {
+          return {
+            content: [
+              {
+                type: "text",
+                text: "Missing firstName/lastName/email. Pass them or ensure get_enquiry_form has saved defaults.",
+              },
+            ],
+            isError: true,
+          };
+        }
         await daft.sendMessage(
           {
             adId: args.adId,
-            firstName: args.firstName,
-            lastName: args.lastName,
-            email: args.email,
-            phone: args.phone,
+            firstName,
+            lastName,
+            email,
+            phone,
             message: args.message,
             moveInDate: args.moveInDate,
             saveReply: args.saveReply,
@@ -840,11 +869,25 @@ export function createServer(daft: DaftApi = createDaftClient()): McpServer {
             ...(args.adultTenants !== undefined
               ? { tenants: { adultTenants: args.adultTenants } }
               : {}),
+            ...(form?.propertyToSellDetails
+              ? { propertyToSellDetails: form.propertyToSellDetails }
+              : {}),
           },
-          recaptcha
+          { token: args.recaptchaToken, action: args.recaptchaAction }
         );
         return ok({ ok: true, adId: args.adId });
       } catch (err) {
+        if (err instanceof ApiError && (err.status === 400 || err.status === 403)) {
+          return {
+            content: [
+              {
+                type: "text",
+                text: `Daft rejected enquiry (HTTP ${err.status}). POST /old/v4/reply requires a valid reCAPTCHA Enterprise token (Recaptcha-Token + Recaptcha-Action). 400 usually means captcha headers missing; 403 means captcha failed/score too low (headless tokens are often rejected). ${err.message}`,
+              },
+            ],
+            isError: true,
+          };
+        }
         return toolError(err);
       }
     }

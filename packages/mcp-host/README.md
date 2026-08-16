@@ -84,6 +84,41 @@ Point Cursor / OpenCode / Hermes at `http://127.0.0.1:3100/mcp/daft` and `…/mc
 
 ---
 
+## Integration: Claude.ai / Claude Desktop (custom connector)
+
+Claude’s hosted connectors speak **OAuth 2.1 + PKCE** and try **Dynamic Client Registration** (`POST /oauth/register`). Without that, Connect fails with:
+
+> Couldn’t register with … sign-in service … add an OAuth Client ID … `ofid_…`
+
+Enable OAuth on the **public** host (Coolify / `dmcp.delt.io`):
+
+| Env | Value |
+|-----|--------|
+| `MCP_PUBLIC_URL` | `https://dmcp.delt.io` (exact HTTPS origin, no trailing slash) |
+| `MCP_OAUTH` | `1` |
+| `MCP_OAUTH_STORE` | `/data/oauth-store.json` (persist clients/tokens across deploys) |
+| `MCP_OAUTH_CLIENT_ID` | `claude-mcp` (optional static id for Advanced settings) |
+| `MCP_OAUTH_AUTO_APPROVE` | `1` (default) — skip consent HTML on personal hosts |
+| `MCP_API_KEYS` | optional Bearer keys for Cursor/Hermes after OAuth is on |
+
+Redeploy, then verify:
+
+```bash
+curl -s https://dmcp.delt.io/.well-known/oauth-authorization-server | jq .registration_endpoint
+curl -s https://dmcp.delt.io/.well-known/oauth-protected-resource/mcp/daft | jq .resource
+```
+
+In Claude: **Settings → Connectors → Add custom connector**
+
+- URL: `https://dmcp.delt.io/mcp/daft` (or `/mcp/adverts`)
+- If DCR still fails: Advanced → OAuth Client ID = `claude-mcp` (and secret if you set `MCP_OAUTH_CLIENT_SECRET`)
+
+Allowlist Anthropic egress `160.79.104.0/21` on Cloudflare/WAF if Connect never hits your logs.
+
+After OAuth is enabled, unauthenticated `/mcp/*` returns **401** + `WWW-Authenticate`. Cursor/Hermes should send `Authorization: Bearer <MCP_API_KEYS value>` (or complete the same OAuth flow).
+
+---
+
 ## Integration: Cursor / Cursor CLI
 
 Cursor Desktop and Cursor CLI both read MCP config from:

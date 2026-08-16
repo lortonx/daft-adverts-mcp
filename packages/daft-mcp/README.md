@@ -12,7 +12,7 @@ Built with the official [MCP TypeScript SDK v2](https://ts.sdk.modelcontextproto
 | `auth_status` | Logged-in? (no raw tokens) |
 | `auth_logout` | Clear / revoke session |
 | `get_enquiry_form` | Saved enquiry fields for a listing (**auth**) |
-| `send_enquiry` | Send listing enquiry / reply (**auth**) |
+| `send_enquiry` | Send listing enquiry / reply (**auth** + **reCAPTCHA**) |
 | `get_report_reasons` | Reasons for reporting a listing |
 | `report_ad` | Report a listing |
 | `search_for_sale` | Residential for sale |
@@ -22,7 +22,7 @@ Built with the official [MCP TypeScript SDK v2](https://ts.sdk.modelcontextproto
 | `autocomplete` | Area autocomplete |
 | `resolve_area` | County/area → shape ids |
 
-Search / details / report work **without** login. Use `auth_login` then `get_enquiry_form` / `send_enquiry` to contact a seller. Google/Apple SSO accounts need a Keycloak password.
+Search / details / report work **without** login. Use `auth_login` then `get_enquiry_form` / `send_enquiry` to contact a seller. `send_enquiry` also needs a valid reCAPTCHA Enterprise token from daft.ie (`Recaptcha-Token` + `Recaptcha-Action`); without it Daft returns 400/403. Google/Apple SSO accounts need a Keycloak password.
 
 Search tools accept `page` / `pageSize`, optional `enrichTop` (1–3), and `detail`:
 
