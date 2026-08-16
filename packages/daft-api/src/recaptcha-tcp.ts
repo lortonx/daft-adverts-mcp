@@ -7,7 +7,8 @@
  *
  * On Docker userspace Tailscale, raw `net.connect` to `100.x` fails — set
  * `DAFT_RECAPTCHA_SOCKS=socks5://127.0.0.1:1056` (entrypoint enables SOCKS5).
- * SOCKS CONNECT carries the hostname so MagicDNS works (`galaxy-j7`).
+ * Prefer Tailscale IP (`100.x`) over MagicDNS hostname — userspace SOCKS
+ * often fails CONNECT to names like `galaxy-j7` (status=1) while IP works.
  */
 import { connect, type Socket } from "node:net";
 
