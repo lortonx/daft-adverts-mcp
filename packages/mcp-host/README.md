@@ -63,9 +63,10 @@ Image sets `MCP_HOST=0.0.0.0` so the port is reachable from the host. Pass API k
 Userspace Tailscale (no Coolify TUN):
 
 - HTTP (Daft API): `Bun → http://127.0.0.1:1055 → exit-node 100.86.200.43`
-- Raw TCP (LSPosed captcha on phone): `Bun → socks5://127.0.0.1:1056 → galaxy-j7:17373`
+- Raw TCP (LSPosed captcha on phone): `Bun → socks5://127.0.0.1:1056 → 100.83.27.97:17373`
 
-Entrypoint sets `HTTP_PROXY` and `DAFT_RECAPTCHA_SOCKS` automatically when `TS_AUTHKEY` is set. Coolify: `DAFT_RECAPTCHA_TCP_HOST=galaxy-j7` (action is hardcoded `submit`).
+Entrypoint sets `HTTP_PROXY` and `DAFT_RECAPTCHA_SOCKS` automatically when `TS_AUTHKEY` is set.
+Coolify: `DAFT_RECAPTCHA_TCP_HOST=100.83.27.97` (prefer IP over MagicDNS). Action is hardcoded `enquiry_form_submit`; reply headers are `Recaptcha-Token` / `Recaptcha-Action`.
 
 Only env: `TS_AUTHKEY`. On Pi: `sudo tailscale set --advertise-exit-node` (+ approve in admin).
 

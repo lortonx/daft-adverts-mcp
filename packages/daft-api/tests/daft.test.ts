@@ -186,6 +186,9 @@ function routeFetch(url: string, _options: RequestInit) {
       })
     );
   }
+  if (url.includes("/old/v4/reply")) {
+    return Promise.resolve(jsonResponse(null, 201));
+  }
   return Promise.resolve(jsonResponse({}));
 }
 
@@ -520,6 +523,41 @@ describe("DaftApi", () => {
       const [url] = lastCall(fetchFn);
       expect(url).toBe("https://gateway.daft.ie/api/v3/ads/listing/1234567");
       expect(result.listing.id).toBe(1234567);
+    });
+  });
+
+  describe("sendMessage", () => {
+    it("sends Recaptcha-Token / Recaptcha-Action (Pascal-Case) + tcAccepted", async () => {
+      const client = new DaftApi({
+        fetchFn: fetchFn as unknown as typeof fetch,
+        platform: "android",
+        appVersion: "9.8.1",
+        mintRecaptchaToken: async () => ({
+          token: "mock-recaptcha-token",
+          action: "enquiry_form_submit",
+        }),
+      });
+      client.setToken("bearer-token");
+      await client.sendMessage({
+        adId: 6646565,
+        firstName: "Yelyzaveta",
+        lastName: "Berezniak",
+        email: "user@example.com",
+        phone: "0877203761",
+        message: "Hi, is this still available?",
+      });
+      const [url, options] = lastCall(fetchFn);
+      expect(url).toContain("/old/v4/reply");
+      expect(options.headers).toMatchObject({
+        "Recaptcha-Token": "mock-recaptcha-token",
+        "Recaptcha-Action": "enquiry_form_submit",
+        Authorization: "Bearer bearer-token",
+      });
+      expect(options.headers).not.toHaveProperty("recaptcha-token");
+      expect(JSON.parse(options.body as string)).toMatchObject({
+        tcAccepted: true,
+        adId: 6646565,
+      });
     });
   });
 

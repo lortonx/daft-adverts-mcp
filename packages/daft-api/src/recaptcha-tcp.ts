@@ -41,7 +41,7 @@ export function resolveRecaptchaTcpOptions(
   const host = (overrides.host ?? env.DAFT_RECAPTCHA_TCP_HOST ?? "").trim();
   if (!host) {
     throw new Error(
-      "DAFT_RECAPTCHA_TCP_HOST is not set (Tailscale hostname/IP of the phone, e.g. galaxy-j7)"
+      "DAFT_RECAPTCHA_TCP_HOST is not set (Tailscale IP of the phone, e.g. 100.83.27.97)"
     );
   }
   const port =

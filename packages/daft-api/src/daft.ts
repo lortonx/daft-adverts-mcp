@@ -660,10 +660,13 @@ export class DaftApi {
 
   /**
    * Send a reply/enquiry message for a listing.
-   * Attaches lowercase `recaptcha-token` + `recaptcha-action` under the hood:
+   * Attaches `Recaptcha-Token` + `Recaptcha-Action` under the hood:
    * optional explicit token, else {@link DaftApiOptions.mintRecaptchaToken},
    * else TCP mint via `DAFT_RECAPTCHA_TCP_HOST` (phone LSPosed).
    * Action is always {@link DEFAULT_RECAPTCHA_ACTION} (`enquiry_form_submit`).
+   *
+   * Header names must match the Android app (`Recaptcha-Token` / `Recaptcha-Action`).
+   * Lowercase `recaptcha-*` is rejected with empty-body HTTP 403.
    */
   async sendMessage(
     body: AdReplyMessageBody,
@@ -678,9 +681,8 @@ export class DaftApi {
         ...body,
       },
       {
-        // Lowercase names: gateway rejects Pascal-Case Recaptcha-* with 403.
-        "recaptcha-token": minted.token,
-        "recaptcha-action": minted.action,
+        "Recaptcha-Token": minted.token,
+        "Recaptcha-Action": minted.action,
       }
     );
   }

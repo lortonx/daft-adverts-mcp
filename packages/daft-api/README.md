@@ -66,7 +66,7 @@ Env (monorepo `.env`): `DAFT_CLIENT_ID`, `DAFT_REFRESH_TOKEN`, `DAFT_ACCESS_TOKE
 
 Optional outbound proxy: `HTTP_PROXY` (HTTP URL; Bun). See root README.
 
-reCAPTCHA for `sendMessage`: set `DAFT_RECAPTCHA_TCP_HOST` (phone LSPosed TCP mint), or pass `{ token, action }`, or inject `mintRecaptchaToken` in options. MCP callers never see the token.
+reCAPTCHA for `sendMessage`: set `DAFT_RECAPTCHA_TCP_HOST` to the phone Tailscale **IP** (e.g. `100.83.27.97`; MagicDNS is flaky via Docker SOCKS), or pass `{ token }`, or inject `mintRecaptchaToken`. Action is always `enquiry_form_submit`. Gateway expects Pascal-Case `Recaptcha-Token` / `Recaptcha-Action` (lowercase → empty-body 403). MCP callers never see the token. Skip listings with `enquired: true` and retry another ad on 403.
 
 ## Search
 
