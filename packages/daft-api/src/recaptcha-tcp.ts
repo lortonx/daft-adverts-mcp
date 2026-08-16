@@ -12,8 +12,8 @@
 import { connect, type Socket } from "node:net";
 
 export const DEFAULT_RECAPTCHA_TCP_PORT = 17373;
-/** Hardcoded Recaptcha-Action for Daft Android enquiry (`submit`). */
-export const DEFAULT_RECAPTCHA_ACTION = "submit";
+/** Hardcoded Recaptcha-Action for Daft Android enquiry. */
+export const DEFAULT_RECAPTCHA_ACTION = "enquiry_form_submit";
 
 export type RecaptchaTcpOptions = {
   host?: string;

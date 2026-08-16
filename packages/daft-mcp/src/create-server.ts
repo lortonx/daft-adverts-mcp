@@ -807,7 +807,7 @@ export function createServer(
     {
       title: "Send Daft listing enquiry",
       description:
-        "Reply / enquire on a listing (POST /old/v4/reply). Pass agentId (after auth_login). Optional username+password re-handshakes. Prefer get_enquiry_form first for name/email/phone defaults.",
+        "Send a listing enquiry after auth_login(agentId). Pass agentId + adId + message (+ optional name/email/phone; otherwise filled from get_enquiry_form). Do not pass captcha fields — captcha is minted server-side automatically.",
       inputSchema: z.object({
         agentId: agentIdField,
         ...optionalCredentials,

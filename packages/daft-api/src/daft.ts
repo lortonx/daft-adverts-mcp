@@ -663,7 +663,7 @@ export class DaftApi {
    * Attaches lowercase `recaptcha-token` + `recaptcha-action` under the hood:
    * optional explicit token, else {@link DaftApiOptions.mintRecaptchaToken},
    * else TCP mint via `DAFT_RECAPTCHA_TCP_HOST` (phone LSPosed).
-   * Action is always {@link DEFAULT_RECAPTCHA_ACTION} (`submit`).
+   * Action is always {@link DEFAULT_RECAPTCHA_ACTION} (`enquiry_form_submit`).
    */
   async sendMessage(
     body: AdReplyMessageBody,
