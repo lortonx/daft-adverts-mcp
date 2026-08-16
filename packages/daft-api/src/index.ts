@@ -22,6 +22,14 @@
  */
 
 export { ApiError, DaftApi, CLIENT_ID } from "./daft";
+export {
+  DEFAULT_RECAPTCHA_ACTION,
+  DEFAULT_RECAPTCHA_TCP_PORT,
+  fetchRecaptchaToken,
+  recaptchaTcpConfigured,
+  resolveRecaptchaTcpOptions,
+} from "./recaptcha-tcp";
+export type { RecaptchaMintResult, RecaptchaTcpOptions } from "./recaptcha-tcp";
 export type {
   // Client options
   DaftApiOptions,

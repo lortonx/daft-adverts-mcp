@@ -1,6 +1,6 @@
 /**
- * Fetch a reCAPTCHA Enterprise token from the LSPosed TCP server on the phone
- * (galaxy-j7 via Tailscale, or any host reachable on DAFT_RECAPTCHA_TCP_HOST).
+ * Mint reCAPTCHA Enterprise tokens via the LSPosed TCP server on a phone
+ * (e.g. galaxy-j7 over Tailscale). Used under the hood by {@link DaftApi.sendMessage}.
  *
  * Protocol: one line request → one line response → close.
  *   TOKEN [action] → OK <token> | ERR <msg>
@@ -17,6 +17,8 @@ export type RecaptchaTcpOptions = {
   timeoutMs?: number;
 };
 
+export type RecaptchaMintResult = { token: string; action: string };
+
 export function recaptchaTcpConfigured(
   env: NodeJS.ProcessEnv = process.env
 ): boolean {
@@ -26,20 +28,27 @@ export function recaptchaTcpConfigured(
 export function resolveRecaptchaTcpOptions(
   overrides: RecaptchaTcpOptions = {},
   env: NodeJS.ProcessEnv = process.env
-): Required<Pick<RecaptchaTcpOptions, "host" | "port" | "action" | "timeoutMs">> {
+): Required<
+  Pick<RecaptchaTcpOptions, "host" | "port" | "action" | "timeoutMs">
+> {
   const host = (overrides.host ?? env.DAFT_RECAPTCHA_TCP_HOST ?? "").trim();
   if (!host) {
     throw new Error(
       "DAFT_RECAPTCHA_TCP_HOST is not set (Tailscale hostname/IP of the phone, e.g. galaxy-j7)"
     );
   }
-  const port = overrides.port
-    ?? Number(env.DAFT_RECAPTCHA_TCP_PORT ?? DEFAULT_RECAPTCHA_TCP_PORT);
+  const port =
+    overrides.port ??
+    Number(env.DAFT_RECAPTCHA_TCP_PORT ?? DEFAULT_RECAPTCHA_TCP_PORT);
   const action =
-    (overrides.action ?? env.DAFT_RECAPTCHA_ACTION ?? DEFAULT_RECAPTCHA_ACTION).trim()
-    || DEFAULT_RECAPTCHA_ACTION;
-  const timeoutMs = overrides.timeoutMs
-    ?? Number(env.DAFT_RECAPTCHA_TCP_TIMEOUT_MS ?? 90_000);
+    (
+      overrides.action ??
+      env.DAFT_RECAPTCHA_ACTION ??
+      DEFAULT_RECAPTCHA_ACTION
+    ).trim() || DEFAULT_RECAPTCHA_ACTION;
+  const timeoutMs =
+    overrides.timeoutMs ??
+    Number(env.DAFT_RECAPTCHA_TCP_TIMEOUT_MS ?? 90_000);
   return { host, port, action, timeoutMs };
 }
 
@@ -47,7 +56,7 @@ export function resolveRecaptchaTcpOptions(
 export async function fetchRecaptchaToken(
   overrides: RecaptchaTcpOptions = {},
   env: NodeJS.ProcessEnv = process.env
-): Promise<{ token: string; action: string }> {
+): Promise<RecaptchaMintResult> {
   const { host, port, action, timeoutMs } = resolveRecaptchaTcpOptions(
     overrides,
     env
@@ -57,11 +66,15 @@ export async function fetchRecaptchaToken(
   if (line.startsWith("OK ")) {
     const token = line.slice(3).trim();
     if (token.length < 20) {
-      throw new Error(`recaptcha TCP returned short token (len=${token.length})`);
+      throw new Error(
+        `recaptcha TCP returned short token (len=${token.length})`
+      );
     }
     return { token, action };
   }
-  throw new Error(line.startsWith("ERR ") ? line.slice(4) : line || "empty response");
+  throw new Error(
+    line.startsWith("ERR ") ? line.slice(4) : line || "empty response"
+  );
 }
 
 function tcpLine(
@@ -75,7 +88,11 @@ function tcpLine(
     let buf = "";
     const timer = setTimeout(() => {
       socket.destroy();
-      reject(new Error(`recaptcha TCP timeout ${host}:${port} after ${timeoutMs}ms`));
+      reject(
+        new Error(
+          `recaptcha TCP timeout ${host}:${port} after ${timeoutMs}ms`
+        )
+      );
     }, timeoutMs);
 
     socket.setEncoding("utf8");

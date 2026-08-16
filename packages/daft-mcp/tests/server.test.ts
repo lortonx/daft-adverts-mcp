@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
+import { createServer as createNetServer, type Server as NetServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Client, StreamableHTTPClientTransport } from "@modelcontextprotocol/client";
@@ -220,11 +221,34 @@ describe("daft MCP server", () => {
   let handler: ReturnType<typeof createMcpHandler>;
   let sessionsDir: string;
   let prevSessionsFile: string | undefined;
+  let prevCaptchaHost: string | undefined;
+  let prevCaptchaPort: string | undefined;
+  let captchaServer: NetServer | undefined;
 
   beforeEach(async () => {
     sessionsDir = mkdtempSync(join(tmpdir(), "daft-mcp-sess-"));
     prevSessionsFile = process.env.DAFT_AGENT_SESSIONS_FILE;
     process.env.DAFT_AGENT_SESSIONS_FILE = join(sessionsDir, "sessions.json");
+
+    prevCaptchaHost = process.env.DAFT_RECAPTCHA_TCP_HOST;
+    prevCaptchaPort = process.env.DAFT_RECAPTCHA_TCP_PORT;
+    captchaServer = createNetServer((socket) => {
+      socket.setEncoding("utf8");
+      let buf = "";
+      socket.on("data", (chunk) => {
+        buf += chunk;
+        if (!buf.includes("\n")) return;
+        socket.write("OK test-token-xxxxxxxxxxxxxxxxxxxx\n");
+        socket.end();
+      });
+    });
+    await new Promise<void>((resolve) =>
+      captchaServer!.listen(0, "127.0.0.1", resolve)
+    );
+    const addr = captchaServer.address();
+    if (!addr || typeof addr === "string") throw new Error("no captcha port");
+    process.env.DAFT_RECAPTCHA_TCP_HOST = "127.0.0.1";
+    process.env.DAFT_RECAPTCHA_TCP_PORT = String(addr.port);
 
     const fetchFn = mock((url: string, init?: RequestInit) => routeFetch(url, init));
     const daft = new DaftApi({
@@ -256,6 +280,15 @@ describe("daft MCP server", () => {
     await handler.close();
     if (prevSessionsFile === undefined) delete process.env.DAFT_AGENT_SESSIONS_FILE;
     else process.env.DAFT_AGENT_SESSIONS_FILE = prevSessionsFile;
+    if (prevCaptchaHost === undefined) delete process.env.DAFT_RECAPTCHA_TCP_HOST;
+    else process.env.DAFT_RECAPTCHA_TCP_HOST = prevCaptchaHost;
+    if (prevCaptchaPort === undefined) delete process.env.DAFT_RECAPTCHA_TCP_PORT;
+    else process.env.DAFT_RECAPTCHA_TCP_PORT = prevCaptchaPort;
+    await new Promise<void>((resolve) => {
+      if (!captchaServer) return resolve();
+      captchaServer.close(() => resolve());
+      captchaServer = undefined;
+    });
     try {
       rmSync(sessionsDir, { recursive: true, force: true });
     } catch {
@@ -319,8 +352,6 @@ describe("daft MCP server", () => {
         lastName: "M",
         email: "user@example.com",
         message: "Is this still available?",
-        recaptchaToken: "test-token",
-        recaptchaAction: "enquiry",
       },
     });
     expect(denied.isError).toBe(true);
@@ -355,8 +386,6 @@ describe("daft MCP server", () => {
         email: "user@example.com",
         message: "Is this still available?",
         phone: "+353800000000",
-        recaptchaToken: "test-token",
-        recaptchaAction: "enquiry",
       },
     });
     expect(sent.isError).toBeFalsy();

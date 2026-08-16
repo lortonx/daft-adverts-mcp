@@ -10,11 +10,6 @@ import { McpServer } from "@modelcontextprotocol/server";
 import * as z from "zod/v4";
 import { createDaftClient } from "./client";
 import { AgentSessionManager } from "./agent-sessions";
-import {
-  DEFAULT_RECAPTCHA_ACTION,
-  fetchRecaptchaToken,
-  recaptchaTcpConfigured,
-} from "./recaptcha-tcp";
 
 /** CDN/UI/ads junk — always dropped, including on detail=full. */
 const DENY = new Set([
@@ -812,7 +807,7 @@ export function createServer(
     {
       title: "Send Daft listing enquiry",
       description:
-        "Reply / enquire on a listing (POST /old/v4/reply). Pass agentId (after auth_login). Optional username+password re-handshakes. reCAPTCHA: recaptchaToken or DAFT_RECAPTCHA_TCP_HOST. Prefer get_enquiry_form first for name/email/phone defaults.",
+        "Reply / enquire on a listing (POST /old/v4/reply). Pass agentId (after auth_login). Optional username+password re-handshakes. Prefer get_enquiry_form first for name/email/phone defaults.",
       inputSchema: z.object({
         agentId: agentIdField,
         ...optionalCredentials,
@@ -844,20 +839,6 @@ export function createServer(
           .optional()
           .describe(
             "If true (default when name/email omitted), fill firstName/lastName/email/phone from get_enquiry_form"
-          ),
-        recaptchaToken: z
-          .string()
-          .min(1)
-          .optional()
-          .describe(
-            "Optional if DAFT_RECAPTCHA_TCP_HOST is set. Recaptcha-Token from phone LSPosed mint or grecaptcha.enterprise.execute"
-          ),
-        recaptchaAction: z
-          .string()
-          .min(1)
-          .optional()
-          .describe(
-            "Recaptcha-Action (default enquiry_form_submit for Android / TCP mint; web often uses enquiry)"
           ),
       }),
     },
@@ -893,67 +874,24 @@ export function createServer(
           };
         }
 
-        let recaptchaToken = args.recaptchaToken?.trim();
-        let recaptchaAction =
-          args.recaptchaAction?.trim()
-          || process.env.DAFT_RECAPTCHA_ACTION?.trim()
-          || DEFAULT_RECAPTCHA_ACTION;
-
-        if (!recaptchaToken) {
-          if (!recaptchaTcpConfigured()) {
-            return {
-              content: [
-                {
-                  type: "text",
-                  text:
-                    "Missing recaptchaToken. Pass it explicitly, or set DAFT_RECAPTCHA_TCP_HOST to the phone Tailscale name/IP (e.g. galaxy-j7) running the LSPosed TCP mint on :17373.",
-                },
-              ],
-              isError: true,
-            };
-          }
-          try {
-            const minted = await fetchRecaptchaToken({
-              action: recaptchaAction,
-            });
-            recaptchaToken = minted.token;
-            recaptchaAction = minted.action;
-          } catch (mintErr) {
-            const msg =
-              mintErr instanceof Error ? mintErr.message : String(mintErr);
-            return {
-              content: [
-                {
-                  type: "text",
-                  text: `Failed to mint reCAPTCHA via TCP (${process.env.DAFT_RECAPTCHA_TCP_HOST}): ${msg}`,
-                },
-              ],
-              isError: true,
-            };
-          }
-        }
-
-        await client.sendMessage(
-          {
-            adId: args.adId,
-            firstName,
-            lastName,
-            email,
-            phone,
-            message: args.message,
-            moveInDate: args.moveInDate,
-            saveReply: args.saveReply,
-            mortgageApproved: args.mortgageApproved,
-            pets: args.pets,
-            ...(args.adultTenants !== undefined
-              ? { tenants: { adultTenants: args.adultTenants } }
-              : {}),
-            ...(form?.propertyToSellDetails
-              ? { propertyToSellDetails: form.propertyToSellDetails }
-              : {}),
-          },
-          { token: recaptchaToken, action: recaptchaAction }
-        );
+        await client.sendMessage({
+          adId: args.adId,
+          firstName,
+          lastName,
+          email,
+          phone,
+          message: args.message,
+          moveInDate: args.moveInDate,
+          saveReply: args.saveReply,
+          mortgageApproved: args.mortgageApproved,
+          pets: args.pets,
+          ...(args.adultTenants !== undefined
+            ? { tenants: { adultTenants: args.adultTenants } }
+            : {}),
+          ...(form?.propertyToSellDetails
+            ? { propertyToSellDetails: form.propertyToSellDetails }
+            : {}),
+        });
         return ok({ ok: true, adId: args.adId, agentId: args.agentId.trim() });
       } catch (err) {
         if (err instanceof ApiError && (err.status === 400 || err.status === 403)) {
@@ -961,7 +899,7 @@ export function createServer(
             content: [
               {
                 type: "text",
-                text: `Daft rejected enquiry (HTTP ${err.status}). POST /old/v4/reply requires a valid reCAPTCHA Enterprise token (Recaptcha-Token + Recaptcha-Action). 400 usually means captcha headers missing; 403 means captcha failed/score too low (headless tokens are often rejected). ${err.message}`,
+                text: `Daft rejected enquiry (HTTP ${err.status}). ${err.message}`,
               },
             ],
             isError: true,

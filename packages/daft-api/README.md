@@ -66,6 +66,8 @@ Env (monorepo `.env`): `DAFT_CLIENT_ID`, `DAFT_REFRESH_TOKEN`, `DAFT_ACCESS_TOKE
 
 Optional outbound proxy: `HTTP_PROXY` (HTTP URL; Bun). See root README.
 
+reCAPTCHA for `sendMessage`: set `DAFT_RECAPTCHA_TCP_HOST` (phone LSPosed TCP mint), or pass `{ token, action }`, or inject `mintRecaptchaToken` in options. MCP callers never see the token.
+
 ## Search
 
 ### Search helpers

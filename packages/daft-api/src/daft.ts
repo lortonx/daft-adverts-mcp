@@ -5,6 +5,11 @@
  * @module @daft-ie/api
  */
 
+import {
+  DEFAULT_RECAPTCHA_ACTION,
+  fetchRecaptchaToken,
+  recaptchaTcpConfigured,
+} from "./recaptcha-tcp";
 import type {
   AdConvertResponse,
   AdOffers,
@@ -120,6 +125,10 @@ export class DaftApi {
   private refreshPromise: Promise<void> | null = null;
   private clientId: string;
   private onTokensChange?: (tokens: DaftTokensSnapshot | null) => void;
+  private mintRecaptchaToken?: () => Promise<{ token: string; action: string }>;
+  private recaptchaTcpHost?: string;
+  private recaptchaTcpPort?: number;
+  private recaptchaAction?: string;
   private areaCache: Map<string, Area> | null = null;
 
   /** Endpoint paths extracted from the decompiled Android app. */
@@ -232,6 +241,10 @@ export class DaftApi {
     this.autoRefresh = options.autoRefresh ?? true;
     this.clientId = resolveClientId(options.clientId);
     this.onTokensChange = options.onTokensChange;
+    this.mintRecaptchaToken = options.mintRecaptchaToken;
+    this.recaptchaTcpHost = options.recaptchaTcpHost;
+    this.recaptchaTcpPort = options.recaptchaTcpPort;
+    this.recaptchaAction = options.recaptchaAction;
 
     const platform = options.platform ?? "web";
 
@@ -649,21 +662,51 @@ export class DaftApi {
 
   /**
    * Send a reply/enquiry message for a listing.
-   * Requires `Recaptcha-Token` + `Recaptcha-Action` (reCAPTCHA Enterprise).
-   * Missing headers → HTTP 400; invalid/low-score tokens → HTTP 403.
+   * Attaches `Recaptcha-Token` + `Recaptcha-Action` under the hood:
+   * optional explicit token, else {@link DaftApiOptions.mintRecaptchaToken},
+   * else TCP mint via `DAFT_RECAPTCHA_TCP_HOST` (phone LSPosed).
    */
   async sendMessage(
     body: AdReplyMessageBody,
-    recaptcha: { token: string; action: string }
+    recaptcha?: { token: string; action?: string }
   ): Promise<void> {
+    const minted = await this.resolveRecaptcha(recaptcha);
     return this.fetchJson<void>(
       `${this.base("common")}${DaftApi.ENDPOINTS.POST_AD_MESSAGE}`,
       "POST",
       body,
       {
-        "Recaptcha-Token": recaptcha.token,
-        "Recaptcha-Action": recaptcha.action,
+        "Recaptcha-Token": minted.token,
+        "Recaptcha-Action": minted.action,
       }
+    );
+  }
+
+  private async resolveRecaptcha(
+    explicit?: { token: string; action?: string }
+  ): Promise<{ token: string; action: string }> {
+    if (explicit?.token?.trim()) {
+      return {
+        token: explicit.token.trim(),
+        action:
+          explicit.action?.trim() ||
+          this.recaptchaAction ||
+          process.env.DAFT_RECAPTCHA_ACTION?.trim() ||
+          DEFAULT_RECAPTCHA_ACTION,
+      };
+    }
+    if (this.mintRecaptchaToken) {
+      return this.mintRecaptchaToken();
+    }
+    if (this.recaptchaTcpHost || recaptchaTcpConfigured()) {
+      return fetchRecaptchaToken({
+        host: this.recaptchaTcpHost,
+        port: this.recaptchaTcpPort,
+        action: this.recaptchaAction,
+      });
+    }
+    throw new Error(
+      "reCAPTCHA mint not configured: set DAFT_RECAPTCHA_TCP_HOST (phone LSPosed TCP) or pass { token, action } / mintRecaptchaToken"
     );
   }
 
