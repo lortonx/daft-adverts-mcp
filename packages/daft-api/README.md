@@ -155,10 +155,11 @@ On 401 the client refreshes once (single-flight) and retries.
 ## Authenticated endpoints
 
 ```typescript
-const me = await daft.getUserInfo(5821124);
-const savedAds = await daft.getSavedAds(5821124, { pageSize: 20, from: 0 });
-const savedSearches = await daft.getSavedSearches(5821124);
-const myAds = await daft.getMyAds(5821124);
+const userId = 1234567; // from login / JWT user_id
+const me = await daft.getUserInfo(userId);
+const savedAds = await daft.getSavedAds(userId, { pageSize: 20, from: 0 });
+const savedSearches = await daft.getSavedSearches(userId);
+const myAds = await daft.getMyAds(userId);
 const myProperties = await daft.getMyProperties();
 const enquiries = await daft.getEnquiries(1234567);
 const offers = await daft.getOffers(1234567);

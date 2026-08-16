@@ -66,7 +66,7 @@ Userspace Tailscale (no Coolify TUN):
 - Raw TCP (LSPosed captcha on phone): `Bun → socks5://127.0.0.1:1056 → 100.83.27.97:17373`
 
 Entrypoint sets `HTTP_PROXY` and `DAFT_RECAPTCHA_SOCKS` automatically when `TS_AUTHKEY` is set.
-Coolify: `DAFT_RECAPTCHA_TCP_HOST=100.83.27.97` (prefer IP over MagicDNS). Action is hardcoded `enquiry_form_submit`; reply headers are `Recaptcha-Token` / `Recaptcha-Action`. After deploy, `GET /health` shows `captcha.configured` / `host` / `socks` — if `host` is missing or still `galaxy-j7`, mint from the container will fail.
+Coolify: `DAFT_RECAPTCHA_TCP_HOST=100.83.27.97` (prefer IP over MagicDNS). Action is hardcoded `enquiry_form_submit`; reply headers are `Recaptcha-Token` / `Recaptcha-Action`.
 
 Only env: `TS_AUTHKEY`. On Pi: `sudo tailscale set --advertise-exit-node` (+ approve in admin).
 

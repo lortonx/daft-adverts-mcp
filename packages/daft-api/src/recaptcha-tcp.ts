@@ -245,6 +245,8 @@ export function parseSocks5Url(url: string): { host: string; port: number } {
 
 /**
  * Minimal SOCKS5 CONNECT (no auth). Leaves socket ready for application data.
+ * Uses ATYP IPv4 when `destHost` is a dotted quad (Tailscale userspace SOCKS
+ * often fails domain CONNECT for MagicDNS / sometimes for IP-as-domain).
  */
 export async function socks5Connect(
   socket: Socket,
@@ -262,18 +264,37 @@ export async function socks5Connect(
     );
   }
 
-  const hostBuf = Buffer.from(destHost, "utf8");
-  if (hostBuf.length > 255) {
-    throw new Error(`SOCKS5 hostname too long: ${destHost}`);
+  const ipv4 = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(destHost);
+  let req: Buffer;
+  if (ipv4) {
+    const octets = ipv4.slice(1).map(Number);
+    if (octets.some((n) => n > 255)) {
+      throw new Error(`invalid IPv4: ${destHost}`);
+    }
+    req = Buffer.alloc(4 + 4 + 2);
+    req[0] = 0x05;
+    req[1] = 0x01;
+    req[2] = 0x00;
+    req[3] = 0x01; // IPv4
+    req[4] = octets[0]!;
+    req[5] = octets[1]!;
+    req[6] = octets[2]!;
+    req[7] = octets[3]!;
+    req.writeUInt16BE(destPort, 8);
+  } else {
+    const hostBuf = Buffer.from(destHost, "utf8");
+    if (hostBuf.length > 255) {
+      throw new Error(`SOCKS5 hostname too long: ${destHost}`);
+    }
+    req = Buffer.alloc(4 + 1 + hostBuf.length + 2);
+    req[0] = 0x05;
+    req[1] = 0x01;
+    req[2] = 0x00;
+    req[3] = 0x03; // domain
+    req[4] = hostBuf.length;
+    hostBuf.copy(req, 5);
+    req.writeUInt16BE(destPort, 5 + hostBuf.length);
   }
-  const req = Buffer.alloc(4 + 1 + hostBuf.length + 2);
-  req[0] = 0x05; // ver
-  req[1] = 0x01; // CONNECT
-  req[2] = 0x00; // rsv
-  req[3] = 0x03; // domain
-  req[4] = hostBuf.length;
-  hostBuf.copy(req, 5);
-  req.writeUInt16BE(destPort, 5 + hostBuf.length);
   socket.write(req);
 
   const head = await reader.read(4);
