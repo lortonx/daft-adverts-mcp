@@ -28,7 +28,7 @@ describe("recaptcha-tcp", () => {
     );
     expect(opts.host).toBe("galaxy-j7");
     expect(opts.port).toBe(17373);
-    expect(opts.action).toBe("enquiry_form_submit");
+    expect(opts.action).toBe("submit");
   });
 
   it("fetchRecaptchaToken talks line protocol", async () => {
@@ -39,7 +39,7 @@ describe("recaptcha-tcp", () => {
         buf += chunk;
         if (!buf.includes("\n")) return;
         const line = buf.trim();
-        expect(line).toBe("TOKEN enquiry_form_submit");
+        expect(line).toBe("TOKEN submit");
         socket.write(
           "OK 03AFcXeabcdefghijklmnopqrstuvwxyz0123456789token\n"
         );
@@ -56,7 +56,7 @@ describe("recaptcha-tcp", () => {
       { host: "127.0.0.1", port: addr.port },
       { DAFT_RECAPTCHA_TCP_HOST: "127.0.0.1" }
     );
-    expect(action).toBe("enquiry_form_submit");
+    expect(action).toBe("submit");
     expect(token.startsWith("03A")).toBe(true);
     expect(token.length).toBeGreaterThan(20);
   });

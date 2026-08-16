@@ -662,9 +662,10 @@ export class DaftApi {
 
   /**
    * Send a reply/enquiry message for a listing.
-   * Attaches `Recaptcha-Token` + `Recaptcha-Action` under the hood:
+   * Attaches lowercase `recaptcha-token` + `recaptcha-action` under the hood:
    * optional explicit token, else {@link DaftApiOptions.mintRecaptchaToken},
    * else TCP mint via `DAFT_RECAPTCHA_TCP_HOST` (phone LSPosed).
+   * Action defaults to {@link DEFAULT_RECAPTCHA_ACTION} (`submit`).
    */
   async sendMessage(
     body: AdReplyMessageBody,
@@ -674,10 +675,14 @@ export class DaftApi {
     return this.fetchJson<void>(
       `${this.base("common")}${DaftApi.ENDPOINTS.POST_AD_MESSAGE}`,
       "POST",
-      body,
       {
-        "Recaptcha-Token": minted.token,
-        "Recaptcha-Action": minted.action,
+        tcAccepted: true,
+        ...body,
+      },
+      {
+        // Lowercase names: gateway rejects Pascal-Case Recaptcha-* with 403.
+        "recaptcha-token": minted.token,
+        "recaptcha-action": minted.action,
       }
     );
   }

@@ -524,7 +524,7 @@ export interface DaftApiOptions {
   recaptchaTcpHost?: string;
   /** TCP mint port (default 17373 / `DAFT_RECAPTCHA_TCP_PORT`). */
   recaptchaTcpPort?: number;
-  /** Recaptcha-Action for auto mint (default `enquiry_form_submit`). */
+  /** recaptcha-action for auto mint (default `submit`). */
   recaptchaAction?: string;
 }
 
@@ -955,6 +955,8 @@ export interface AdReplyMessageBody {
   replyDate?: string;
   moveInDate?: string;
   saveReply?: boolean;
+  /** Terms of Use accepted (required when not already on account). */
+  tcAccepted?: boolean;
   mortgageApproved?: boolean;
   buyerType?: BuyerType;
   pets?: boolean;

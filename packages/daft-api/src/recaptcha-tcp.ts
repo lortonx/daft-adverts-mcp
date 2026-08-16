@@ -8,7 +8,8 @@
 import { connect } from "node:net";
 
 export const DEFAULT_RECAPTCHA_TCP_PORT = 17373;
-export const DEFAULT_RECAPTCHA_ACTION = "enquiry_form_submit";
+/** Gateway expects this action name (not `enquiry_form_submit`). */
+export const DEFAULT_RECAPTCHA_ACTION = "submit";
 
 export type RecaptchaTcpOptions = {
   host?: string;
