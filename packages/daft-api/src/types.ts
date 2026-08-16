@@ -524,8 +524,6 @@ export interface DaftApiOptions {
   recaptchaTcpHost?: string;
   /** TCP mint port (default 17373 / `DAFT_RECAPTCHA_TCP_PORT`). */
   recaptchaTcpPort?: number;
-  /** recaptcha-action for auto mint (default `submit`). */
-  recaptchaAction?: string;
 }
 
 /** Snapshot passed to {@link DaftApiOptions.onTokensChange}. */

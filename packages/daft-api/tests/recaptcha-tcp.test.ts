@@ -1,5 +1,5 @@
 import { describe, it, expect, afterEach } from "bun:test";
-import { createServer, type Server } from "node:net";
+import { connect, createServer, type Server } from "node:net";
 import {
   fetchRecaptchaToken,
   recaptchaTcpConfigured,
@@ -82,4 +82,85 @@ describe("recaptcha-tcp", () => {
       )
     ).rejects.toThrow("busy");
   });
+
+  it(
+    "fetchRecaptchaToken dials via SOCKS5",
+    async () => {
+      const upstream = createServer((socket) => {
+        socket.setEncoding("utf8");
+        let buf = "";
+        socket.on("data", (chunk) => {
+          buf += chunk;
+          if (!buf.includes("\n")) return;
+          expect(buf.trim()).toBe("TOKEN submit");
+          socket.write(
+            "OK 03AFcXeabcdefghijklmnopqrstuvwxyz0123456789socks\n"
+          );
+          socket.end();
+        });
+      });
+      await new Promise<void>((r) => upstream.listen(0, "127.0.0.1", r));
+      const upAddr = upstream.address();
+      if (!upAddr || typeof upAddr === "string") throw new Error("no up port");
+
+      const socks = createServer((client) => {
+        let stage: "greet" | "req" = "greet";
+        let buf = Buffer.alloc(0);
+        client.on("data", (chunk) => {
+          if (stage === "pipe") return;
+          buf = Buffer.concat([buf, chunk]);
+          if (stage === "greet") {
+            if (buf.length < 3) return;
+            client.write(Buffer.from([0x05, 0x00]));
+            buf = buf.subarray(3);
+            stage = "req";
+          }
+          if (stage !== "req") return;
+          if (buf.length < 5) return;
+          const atyp = buf[3]!;
+          if (atyp !== 0x03) {
+            client.destroy();
+            return;
+          }
+          const hlen = buf[4]!;
+          if (buf.length < 5 + hlen + 2) return;
+          const destPort = buf.readUInt16BE(5 + hlen);
+          expect(destPort).toBe(upAddr.port);
+          const rest = buf.subarray(5 + hlen + 2);
+          buf = Buffer.alloc(0);
+          stage = "pipe" as "greet"; // stop handshake parsing
+          const remote = connect({ host: "127.0.0.1", port: upAddr.port }, () => {
+            // Reply only after upstream is up so early payload is not lost.
+            client.write(
+              Buffer.from([0x05, 0x00, 0x00, 0x01, 0, 0, 0, 0, 0, 0])
+            );
+            if (rest.length) remote.write(rest);
+            client.pipe(remote);
+            remote.pipe(client);
+          });
+          remote.on("error", () => client.destroy());
+        });
+      });
+      await new Promise<void>((r) => socks.listen(0, "127.0.0.1", r));
+      const socksAddr = socks.address();
+      if (!socksAddr || typeof socksAddr === "string")
+        throw new Error("no socks");
+
+      try {
+        const { token } = await fetchRecaptchaToken(
+          {
+            host: "galaxy-j7",
+            port: upAddr.port,
+            socks: `socks5://127.0.0.1:${socksAddr.port}`,
+          },
+          { DAFT_RECAPTCHA_TCP_HOST: "galaxy-j7" }
+        );
+        expect(token.endsWith("socks")).toBe(true);
+      } finally {
+        socks.close();
+        upstream.close();
+      }
+    },
+    15_000
+  );
 });
