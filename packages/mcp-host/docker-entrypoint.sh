@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # Tailscale userspace:
-#   HTTP  → 127.0.0.1:1055 (HTTP_PROXY) → exit-node Pi
+#   HTTP  → 127.0.0.1:1055 (HTTP_PROXY) → exit-node (TS_EXIT_NODE)
 #   raw TCP (captcha mint to phone) → 127.0.0.1:1056 SOCKS5 (DAFT_RECAPTCHA_SOCKS)
 # Only env required: TS_AUTHKEY
-# Pi once: sudo tailscale set --advertise-exit-node (+ approve in admin)
+# Exit node once: sudo tailscale set --advertise-exit-node (+ approve in admin)
 set -euo pipefail
 
 if [[ -z "${TS_AUTHKEY:-}" ]]; then
@@ -15,7 +15,7 @@ mkdir -p /var/run/tailscale /var/lib/tailscale
 
 TS_HTTP="127.0.0.1:1055"
 TS_SOCKS="127.0.0.1:1056"
-EXIT_NODE="100.86.200.43"
+EXIT_NODE="${TS_EXIT_NODE:-100.102.134.100}"
 
 tailscaled \
   --state=/var/lib/tailscale/tailscaled.state \
