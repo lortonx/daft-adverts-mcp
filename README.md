@@ -80,7 +80,7 @@ bun packages/daft-mcp/src/index.ts
 bun packages/adverts-mcp/src/index.ts
 ```
 
-Wire-up for Cursor CLI, OpenCode, and Hermes is documented in [`packages/mcp-host/README.md`](packages/mcp-host/README.md#integration-cursor--cursor-cli).
+Wire-up: [`.cursor/mcp.json`](.cursor/mcp.json), [`opencode.json`](opencode.json), and [`packages/mcp-host/README.md`](packages/mcp-host/README.md#integration-cursor--cursor-cli).
 
 ## Environment
 

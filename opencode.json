@@ -1,0 +1,19 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "mcp": {
+    "daft": {
+      "type": "remote",
+      "url": "https://*/mcp/daft",
+      "enabled": true,
+      "oauth": false,
+      "timeout": 60000
+    },
+    "adverts": {
+      "type": "remote",
+      "url": "https://*/mcp/adverts",
+      "enabled": true,
+      "oauth": false,
+      "timeout": 60000
+    }
+  }
+}

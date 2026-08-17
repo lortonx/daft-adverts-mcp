@@ -7,7 +7,7 @@ import {
 } from "./store.ts";
 
 export type OAuthConfig = {
-  /** Public origin, e.g. https://dmcp.delt.io (no trailing slash). */
+  /** Public origin, e.g. https://example.com (no trailing slash). */
   publicUrl: string;
   /** MCP mount paths protected by bearer auth. */
   mcpPaths: string[];

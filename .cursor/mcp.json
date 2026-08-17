@@ -1,18 +1,10 @@
 {
   "mcpServers": {
     "daft": {
-      "type": "stdio",
-      "command": "C:\\Users\\lorto\\.bun\\bin\\bun.exe",
-      "args": [
-        "F:/aiprojects/daft.ie/packages/daft-mcp/src/index.ts"
-      ]
+      "url": "https://*/mcp/daft"
     },
     "adverts": {
-      "type": "stdio",
-      "command": "C:\\Users\\lorto\\.bun\\bin\\bun.exe",
-      "args": [
-        "F:/aiprojects/daft.ie/packages/adverts-mcp/src/index.ts"
-      ]
+      "url": "https://*/mcp/adverts"
     }
   }
 }

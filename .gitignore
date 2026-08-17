@@ -32,3 +32,4 @@ packages/adverts-api/research/**/jadx-out/
 research
 logs
 .cursor
+!.cursor/mcp.json

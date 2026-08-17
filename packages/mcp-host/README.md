@@ -12,9 +12,11 @@ Prefer this host when several clients (Cursor, OpenCode, Hermes, …) should sha
 | `/mcp/daft` | [`@daft-ie/mcp`](../daft-mcp) |
 | `/mcp/adverts` | [`@adverts-ie/mcp`](../adverts-mcp) |
 
-Default listen: `http://127.0.0.1:3100`.
+Default listen: `http://127.0.0.1:3100`. Public: `https://example.com`.
 
-Add more with `app.all("/mcp/<name>", …)` in [`src/index.ts`](src/index.ts).
+One transport: Streamable HTTP (`createMcpHandler` + `toNodeHandler`). Cursor and OpenCode both speak it; they just use different config files (see below). `GET` without a session may return **405** — that is the protocol, not a dead host.
+
+Add more with `app.all("/mcp/<name>", …)` in [`src/app.ts`](src/app.ts).
 
 ## Run
 
@@ -88,7 +90,7 @@ docker run --rm -p 3100:3100 --env-file .env \
 
 Health: `GET /health` — Docker `HEALTHCHECK` uses `curl` against `PORT` / `MCP_HOST_PORT` (default 3100).
 
-Point Cursor / OpenCode / Hermes at `http://127.0.0.1:3100/mcp/daft` and `…/mcp/adverts` as usual.
+Point Cursor / OpenCode / Hermes at `https://example.com/mcp/daft` (or local `http://127.0.0.1:3100/mcp/daft`) and the matching `/mcp/adverts` URL.
 
 ---
 
@@ -98,11 +100,11 @@ Claude’s hosted connectors speak **OAuth 2.1 + PKCE** and try **Dynamic Client
 
 > Couldn’t register with … sign-in service … add an OAuth Client ID … `ofid_…`
 
-Enable OAuth on the **public** host (Coolify / `dmcp.delt.io`):
+Enable OAuth on the **public** host (Coolify / `example.com`):
 
 | Env | Value |
 |-----|--------|
-| `MCP_PUBLIC_URL` | `https://dmcp.delt.io` (exact HTTPS origin, no trailing slash) |
+| `MCP_PUBLIC_URL` | `https://example.com` (exact HTTPS origin, no trailing slash) |
 | `MCP_OAUTH` | `1` |
 | `MCP_OAUTH_STORE` | `/data/oauth-store.json` (persist clients/tokens across deploys) |
 | `MCP_OAUTH_CLIENT_ID` | `claude-mcp` (optional static id for Advanced settings) |
@@ -112,18 +114,18 @@ Enable OAuth on the **public** host (Coolify / `dmcp.delt.io`):
 Redeploy, then verify:
 
 ```bash
-curl -s https://dmcp.delt.io/.well-known/oauth-authorization-server | jq .registration_endpoint
-curl -s https://dmcp.delt.io/.well-known/oauth-protected-resource/mcp/daft | jq .resource
+curl -s https://example.com/.well-known/oauth-authorization-server | jq .registration_endpoint
+curl -s https://example.com/.well-known/oauth-protected-resource/mcp/daft | jq .resource
 ```
 
 In Claude: **Settings → Connectors → Add custom connector**
 
-- URL: `https://dmcp.delt.io/mcp/daft` (or `/mcp/adverts`)
+- URL: `https://example.com/mcp/daft` (or `/mcp/adverts`)
 - If DCR still fails: Advanced → OAuth Client ID = `claude-mcp` (and secret if you set `MCP_OAUTH_CLIENT_SECRET`)
 
 Allowlist Anthropic egress `160.79.104.0/21` on Cloudflare/WAF if Connect never hits your logs.
 
-After OAuth is enabled, unauthenticated `/mcp/*` returns **401** + `WWW-Authenticate`. Cursor/Hermes should send `Authorization: Bearer <MCP_API_KEYS value>` (or complete the same OAuth flow).
+After OAuth is enabled, unauthenticated `/mcp/*` returns **401** + `WWW-Authenticate`. Cursor / OpenCode / Hermes should send `Authorization: Bearer <MCP_API_KEYS value>` (or complete the same OAuth flow).
 
 ---
 
@@ -136,20 +138,7 @@ Cursor Desktop and Cursor CLI both read MCP config from:
 
 ### A) HTTP via mcp-host (shared process)
 
-Start the host first, then:
-
-```json
-{
-  "mcpServers": {
-    "daft": {
-      "url": "http://127.0.0.1:3100/mcp/daft"
-    },
-    "adverts": {
-      "url": "http://127.0.0.1:3100/mcp/adverts"
-    }
-  }
-}
-```
+Use the committed [`.cursor/mcp.json`](../../.cursor/mcp.json). Reload MCP after edits. Local host: same shape with `http://127.0.0.1:3100/mcp/daft`. If OAuth is on, send `Authorization: Bearer` from `MCP_API_KEYS`.
 
 ### B) Stdio (one Bun process per server)
 
@@ -191,29 +180,9 @@ Docs: [opencode.ai/docs/mcp-servers](https://opencode.ai/docs/mcp-servers/).
 
 ### A) Remote (mcp-host)
 
-Host must be running.
+Use committed [`opencode.json`](../../opencode.json) (`type: "remote"`, `oauth: false`, `timeout: 60000`). Not Cursor’s `mcpServers` shape.
 
-```jsonc
-{
-  "$schema": "https://opencode.ai/config.json",
-  "mcp": {
-    "daft": {
-      "type": "remote",
-      "url": "http://127.0.0.1:3100/mcp/daft",
-      "enabled": true,
-      "oauth": false
-    },
-    "adverts": {
-      "type": "remote",
-      "url": "http://127.0.0.1:3100/mcp/adverts",
-      "enabled": true,
-      "oauth": false
-    }
-  }
-}
-```
-
-`oauth: false` avoids OpenCode trying an OAuth flow on a local unauthenticated mount.
+Local: same keys with `http://127.0.0.1:3100/mcp/daft`. If the host has OAuth on, add `"headers": { "Authorization": "Bearer YOUR_MCP_API_KEY" }`.
 
 ### B) Local stdio
 

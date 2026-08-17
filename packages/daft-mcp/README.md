@@ -68,12 +68,13 @@ Optional env (see root `.env.example`):
 
 Logs for stdio go to **stderr** only (stdout is JSON-RPC).
 
-## Cursor / Cursor CLI
+## Cursor / OpenCode
 
-Launch **bun directly** (not `cmd` / `run-mcp.cmd` — wrapping stdio through `cmd.exe` can hang Cursor CLI after MCP approve):
+HTTP (preferred): [`.cursor/mcp.json`](../../.cursor/mcp.json) and [`opencode.json`](../../opencode.json) point at the shared host. See [`../mcp-host`](../mcp-host).
 
-- Project: [`.cursor/mcp.json`](../../.cursor/mcp.json)
-- Global: `C:\Users\lorto\.cursor\mcp.json`
+Stdio: launch **bun directly** (not `cmd` / `run-mcp.cmd` — wrapping stdio through `cmd.exe` can hang Cursor CLI after MCP approve):
+
+- Cursor global: `C:\Users\lorto\.cursor\mcp.json`
 
 `src/boot.ts` loads the monorepo `.env` and clears `ELECTRON_RUN_AS_NODE`, so wrong cwd is fine.
 
