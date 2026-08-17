@@ -43,6 +43,13 @@ for _ in $(seq 1 60); do
   sleep 0.5
 done
 
+# `up` after first login often ignores --exit-node; pin it again.
+if ! tailscale --socket=/var/run/tailscale/tailscaled.sock set \
+  --exit-node="${EXIT_NODE}" \
+  --exit-node-allow-lan-access=true; then
+  echo "tailscale: exit-node ${EXIT_NODE} rejected (node must advertise 0.0.0.0/0 and be approved in admin)" >&2
+fi
+
 if [[ -n "${HTTP_PROXY:-}" && "${HTTP_PROXY}" != "http://${TS_HTTP}" ]]; then
   echo "tailscale: HTTP_PROXY was '${HTTP_PROXY}' — overwritten to http://${TS_HTTP} because TS_AUTHKEY is set" >&2
 fi
