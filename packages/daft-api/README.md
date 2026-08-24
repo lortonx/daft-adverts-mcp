@@ -66,7 +66,7 @@ Env (monorepo `.env`): `DAFT_CLIENT_ID`, `DAFT_REFRESH_TOKEN`, `DAFT_ACCESS_TOKE
 
 Optional outbound proxy: `HTTP_PROXY` (HTTP URL; Bun). See root README.
 
-reCAPTCHA for `sendMessage`: set `DAFT_RECAPTCHA_TCP_HOST` to the phone Tailscale **IP** (e.g. `100.83.27.97`; MagicDNS is flaky via Docker SOCKS), or pass `{ token }`, or inject `mintRecaptchaToken`. Action is always `enquiry_form_submit`. Gateway expects Pascal-Case `Recaptcha-Token` / `Recaptcha-Action` (lowercase → empty-body 403). Auto-mint prefers short tokens (`DAFT_RECAPTCHA_PREFER_SHORT`, default on) and remints on HTTP 403 up to `DAFT_RECAPTCHA_SEND_RETRIES` (default 10). MCP callers never see the token. Skip listings with `enquired: true` and retry another ad if still 403 after retries.
+reCAPTCHA / enquiry: MCP defaults to **Chrome web form** (`DAFT_ENQUIRY_MODE=chrome`) — see `src/chrome/`. Legacy Android TCP mint: `DAFT_ENQUIRY_MODE=tcp` + `DAFT_RECAPTCHA_TCP_HOST`. Gateway still expects Pascal-Case `Recaptcha-Token` / `Recaptcha-Action` on the TCP path.
 
 ## Search
 

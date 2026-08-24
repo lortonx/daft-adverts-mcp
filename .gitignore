@@ -4,6 +4,7 @@
 !.env.example
 .daft-tokens.json
 .daft-agent-sessions.json
+.daft-chrome/
 
 # Node
 node_modules/

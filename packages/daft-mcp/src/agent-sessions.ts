@@ -1,4 +1,4 @@
-import { DaftApi } from "@daft-ie/api";
+import { DaftApi, enquiryMode, getChromePool } from "@daft-ie/api";
 import {
   deleteAgentSession,
   getAgentSession,
@@ -20,6 +20,8 @@ export type AgentSessionManagerOptions = {
 export class AgentSessionManager {
   private readonly clients = new Map<string, DaftApi>();
   private readonly usernames = new Map<string, string>();
+  /** In-memory only — for Chrome web re-login after idle kill. Never written to disk. */
+  private readonly passwords = new Map<string, string>();
   readonly anonymous: DaftApi;
   private readonly fetchFn?: typeof fetch;
 
@@ -42,6 +44,11 @@ export class AgentSessionManager {
   getUsername(agentId: string): string | undefined {
     const id = this.normalizeId(agentId);
     return this.usernames.get(id) ?? getAgentSession(id)?.username;
+  }
+
+  /** Password from last auth_login in this process (not persisted). */
+  getPassword(agentId: string): string | undefined {
+    return this.passwords.get(this.normalizeId(agentId));
   }
 
   /**
@@ -87,6 +94,7 @@ export class AgentSessionManager {
     const id = this.normalizeId(agentId);
     const client = this.clientFor(id);
     this.usernames.set(id, username);
+    this.passwords.set(id, password);
     await client.login(username, password);
     upsertAgentSession(id, {
       accessToken: client.getToken(),
@@ -132,7 +140,15 @@ export class AgentSessionManager {
     }
     this.clients.delete(id);
     this.usernames.delete(id);
+    this.passwords.delete(id);
     deleteAgentSession(id);
+    if (username && enquiryMode() === "chrome") {
+      try {
+        getChromePool().clearUser(username);
+      } catch {
+        /* chrome pool optional */
+      }
+    }
   }
 
   /** Drop in-memory client (tests). Disk unchanged unless logout. */

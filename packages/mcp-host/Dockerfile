@@ -1,11 +1,10 @@
 # Build from monorepo root:
 #   docker build -f packages/mcp-host/Dockerfile -t daft-mcp-host .
 #   docker run --rm -p 3100:3100 --env-file .env \
-#     -v daft-ts-state:/var/lib/tailscale \
+#     -v daft-chrome:/data/daft-chrome \
 #     daft-mcp-host
 #
-# Userspace Tailscale (no Coolify TUN). Bun → local HTTP proxy → exit-node Pi.
-# On Pi: tailscale set --advertise-exit-node  (and allow in admin console)
+# Enquiry: headed Chrome + Xvfb (DAFT_ENQUIRY_MODE=chrome). No Tailscale.
 
 FROM oven/bun:1
 
@@ -27,19 +26,35 @@ COPY packages/adverts-mcp packages/adverts-mcp
 COPY packages/mcp-host packages/mcp-host
 
 RUN apt-get update \
-  && apt-get install -y --no-install-recommends curl ca-certificates \
+  && apt-get install -y --no-install-recommends \
+    curl ca-certificates gnupg \
+    xvfb \
+    fonts-liberation fonts-noto-color-emoji \
+    libasound2 libatk-bridge2.0-0 libatk1.0-0 libcups2 libdbus-1-3 \
+    libdrm2 libgbm1 libgtk-3-0 libnspr4 libnss3 libxcomposite1 \
+    libxdamage1 libxrandr2 libxshmfence1 libxss1 libxtst6 xdg-utils \
+  && curl -fsSL https://dl.google.com/linux/linux_signing_key.pub \
+    | gpg --dearmor -o /usr/share/keyrings/google-chrome.gpg \
+  && echo "deb [arch=amd64 signed-by=/usr/share/keyrings/google-chrome.gpg] http://dl.google.com/linux/chrome/deb/ stable main" \
+    > /etc/apt/sources.list.d/google-chrome.list \
+  && apt-get update \
+  && apt-get install -y --no-install-recommends google-chrome-stable \
   && rm -rf /var/lib/apt/lists/*
 
-COPY --from=tailscale/tailscale:stable /usr/local/bin/tailscaled /usr/local/bin/tailscaled
-COPY --from=tailscale/tailscale:stable /usr/local/bin/tailscale /usr/local/bin/tailscale
 COPY packages/mcp-host/docker-entrypoint.sh /docker-entrypoint.sh
 RUN chmod +x /docker-entrypoint.sh \
-  && mkdir -p /var/run/tailscale /var/lib/tailscale /data
+  && mkdir -p /data/daft-chrome
 
 ENV MCP_HOST=0.0.0.0
 ENV HOST=0.0.0.0
 ENV PORT=3100
 ENV MCP_HOST_PORT=3100
+ENV CHROME_PATH=/usr/bin/google-chrome-stable
+ENV DAFT_CHROME_XVFB=1
+ENV DAFT_CHROME_DISPLAY=:99
+ENV DAFT_CHROME_DATA_DIR=/data/daft-chrome
+ENV DAFT_CHROME_IDLE_MS=90000
+ENV DAFT_ENQUIRY_MODE=chrome
 
 EXPOSE 3000 3100
 

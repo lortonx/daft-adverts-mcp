@@ -38,6 +38,25 @@ export {
   resolveRecaptchaTcpOptions,
 } from "./recaptcha-tcp";
 export type { RecaptchaMintResult, RecaptchaTcpOptions } from "./recaptcha-tcp";
+export {
+  ChromePool,
+  getChromePool,
+  resetChromePoolForTests,
+  sendEnquiryViaChrome,
+  ensureWebLogin,
+  normalizeEmail,
+  enquiryMode,
+  resolveChromePoolEnv,
+  Mutex,
+  wipeChromeProfile,
+  deleteCookieFile,
+  pruneStaleCookieFiles,
+} from "./chrome";
+export type {
+  ChromePoolOptions,
+  ChromeEnquiryInput,
+  ChromeEnquiryResult,
+} from "./chrome";
 export type {
   // Client options
   DaftApiOptions,

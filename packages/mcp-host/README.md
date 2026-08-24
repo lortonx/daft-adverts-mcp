@@ -37,9 +37,9 @@ Env (root `.env` / `.env.example`):
 | `DAFT_*` | Daft API / tokens — see [`../daft-mcp`](../daft-mcp) |
 | `DAFT_AGENT_SESSIONS_FILE` | JSON DB of per-`agentId` refresh sessions |
 | `ADVERTS_*` | Adverts API keys / tokens — see [`../adverts-mcp`](../adverts-mcp) |
-| `HTTP_PROXY` | optional HTTP proxy for both APIs (Bun); Docker+Tailscale sets this |
-| `TS_AUTHKEY` | Docker: Tailscale auth key |
-| `DAFT_RECAPTCHA_SOCKS` | Docker: `socks5://127.0.0.1:1056` (set by entrypoint) so captcha TCP reaches the phone |
+| `HTTP_PROXY` | optional HTTP proxy for Bun API calls (search etc.) |
+| `DAFT_ENQUIRY_MODE` | default `chrome` (web form); `tcp` = legacy phone LSPosed |
+| `DAFT_CHROME_*` / `CHROME_PATH` | Chrome pool: Xvfb, idle kill, cookies under `/data/daft-chrome` |
 
 Keep the host running while clients are connected. Check:
 
@@ -60,23 +60,25 @@ docker run --rm -p 3100:3100 --env-file .env daft-mcp-host
 
 Image sets `MCP_HOST=0.0.0.0` so the port is reachable from the host. Pass API keys / tokens via `--env-file .env` or `-e` (do not bake secrets into the image).
 
-### Tailscale + Pi exit node (one container)
+### Chrome web enquiry (default)
 
-Userspace Tailscale (no Coolify TUN):
+`DAFT_ENQUIRY_MODE=chrome` (image default): `send_enquiry` drives headed Chrome over CDP.
 
-- HTTP (Daft API): `Bun → http://127.0.0.1:1055 → exit-node 100.102.134.100`
-- Raw TCP (LSPosed captcha on phone): `Bun → socks5://127.0.0.1:1056 → 100.83.27.97:17373`
-
-Entrypoint sets `HTTP_PROXY` and `DAFT_RECAPTCHA_SOCKS` automatically when `TS_AUTHKEY` is set.
-Coolify: `DAFT_RECAPTCHA_TCP_HOST=100.83.27.97` (prefer IP over MagicDNS). Action is hardcoded `enquiry_form_submit`; reply headers are `Recaptcha-Token` / `Recaptcha-Action`.
-
-Only env: `TS_AUTHKEY` (optional `TS_EXIT_NODE`, default `100.102.134.100`). On exit-node: `sudo tailscale set --advertise-exit-node` (+ approve in admin).
+- **Xvfb** virtual display (no GPU) — pure `--headless=new` fails Cloudflare
+- **On-demand** start; **idle kill** after `DAFT_CHROME_IDLE_MS` (default 90s)
+- **Per-email BrowserContext** + cookie JSON under `DAFT_CHROME_DATA_DIR/cookies`
+- Concurrent MCP users = concurrent tabs/contexts; same email serialized
+- Password kept **in memory** after `auth_login` (for re-login after Chrome kill); cookies on disk
+- **No Tailscale** — direct egress from the host/container
+- **Disk policy:** wipe `profile/` after idle kill (`DAFT_CHROME_WIPE_PROFILE=1`); prune cookie JSON older than `DAFT_CHROME_COOKIE_MAX_AGE_MS` (default 30d); `auth_logout` deletes that email's cookie file
 
 ```bash
 docker run --rm -p 3100:3100 --env-file .env \
-  -v daft-ts-state:/var/lib/tailscale \
+  -v daft-chrome:/data/daft-chrome \
   daft-mcp-host
 ```
+
+Legacy phone TCP mint: `DAFT_ENQUIRY_MODE=tcp` + `DAFT_RECAPTCHA_TCP_HOST` (optional SOCKS). Not used by the Docker image by default.
 
 Optional: persist login tokens across restarts:
 

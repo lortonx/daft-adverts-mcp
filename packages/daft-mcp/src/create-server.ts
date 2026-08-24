@@ -1,6 +1,9 @@
 import {
   ApiError,
   DaftApi,
+  enquiryMode,
+  getChromePool,
+  sendEnquiryViaChrome,
   type Listing,
   type PropertyDetailsResponse,
   type SearchOptions,
@@ -10,6 +13,24 @@ import { McpServer } from "@modelcontextprotocol/server";
 import * as z from "zod/v4";
 import { createDaftClient } from "./client";
 import { AgentSessionManager } from "./agent-sessions";
+
+async function resolveListingUrl(
+  client: DaftApi,
+  adId: number
+): Promise<string> {
+  const details = await client.getPropertyDetails(adId);
+  if (details.canonicalUrl?.startsWith("http")) return details.canonicalUrl;
+  const path = details.listing?.seoFriendlyPath;
+  if (path?.startsWith("http")) return path;
+  if (path?.startsWith("/")) return `https://www.daft.ie${path}`;
+  throw new Error(
+    `No canonicalUrl for adId=${adId}; cannot open web enquiry form`
+  );
+}
+
+function useChromeEnquiry(): boolean {
+  return enquiryMode() === "chrome";
+}
 
 /** CDN/UI/ads junk — always dropped, including on detail=full. */
 const DENY = new Set([
@@ -582,7 +603,7 @@ export function createServer(
     {
       title: "Log in to Daft",
       description:
-        "Handshake: bind agentId to a Daft Keycloak password login. Persists refresh/access tokens in the JSON session DB keyed by agentId (password is never stored). Later tools only need agentId. Google/Apple SSO accounts need a Keycloak password. Does not return raw tokens.",
+        "Handshake: bind agentId to a Daft Keycloak password login. Persists refresh/access tokens in the JSON session DB keyed by agentId (password is never written to disk; kept in-memory for Chrome enquiry re-login). Later tools only need agentId. Google/Apple SSO accounts need a Keycloak password. Does not return raw tokens.",
       inputSchema: z.object({
         agentId: agentIdField,
         username: z
@@ -874,6 +895,58 @@ export function createServer(
           };
         }
 
+        if (useChromeEnquiry()) {
+          const username =
+            args.username?.trim() ||
+            sessions.getUsername(args.agentId) ||
+            email;
+          const password =
+            args.password || sessions.getPassword(args.agentId);
+          if (!password) {
+            return {
+              content: [
+                {
+                  type: "text",
+                  text:
+                    "Chrome enquiry needs password in this process. Call auth_login(agentId, username, password) again (password is memory-only after restart).",
+                },
+              ],
+              isError: true,
+            };
+          }
+          const listingUrl = await resolveListingUrl(client, args.adId);
+          const pool = getChromePool();
+          pool.rememberPassword(username, password);
+          const result = await sendEnquiryViaChrome(pool, {
+            email: username,
+            password,
+            listingUrl,
+            message: args.message,
+            firstName,
+            lastName,
+            phone,
+            contactEmail: email,
+          });
+          if (!result.ok) {
+            return {
+              content: [
+                {
+                  type: "text",
+                  text: `Chrome enquiry failed: ${result.detail ?? "unknown"} (HTTP ${result.replyStatus ?? "n/a"})`,
+                },
+              ],
+              isError: true,
+            };
+          }
+          return ok({
+            ok: true,
+            adId: args.adId,
+            agentId: args.agentId.trim(),
+            via: "chrome",
+            replyStatus: result.replyStatus,
+          });
+        }
+
         await client.sendMessage({
           adId: args.adId,
           firstName,
@@ -907,16 +980,19 @@ export function createServer(
         }
         const msg = err instanceof Error ? err.message : String(err);
         if (
-          /recaptcha|captcha|DAFT_RECAPTCHA|SOCKS5|TCP timeout|busy/i.test(msg)
+          /recaptcha|captcha|DAFT_RECAPTCHA|SOCKS5|TCP timeout|busy|chrome enquiry|Cloudflare|Xvfb/i.test(
+            msg
+          )
         ) {
           return {
             content: [
               {
                 type: "text",
                 text:
-                  `Captcha mint failed: ${msg}. ` +
-                  `On Coolify check DAFT_RECAPTCHA_TCP_HOST=100.83.27.97 (IP, not MagicDNS), ` +
-                  `phone LSPosed TCP up, and DAFT_RECAPTCHA_SOCKS (set by entrypoint).`,
+                  `Enquiry/captcha failed: ${msg}. ` +
+                  (useChromeEnquiry()
+                    ? `Chrome mode (DAFT_ENQUIRY_MODE=chrome): check CHROME_PATH, Xvfb (DAFT_CHROME_XVFB=1), and auth_login password in-memory.`
+                    : `TCP mode: DAFT_RECAPTCHA_TCP_HOST + phone LSPosed + DAFT_RECAPTCHA_SOCKS.`),
               },
             ],
             isError: true,
