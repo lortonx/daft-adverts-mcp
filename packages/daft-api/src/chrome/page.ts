@@ -136,7 +136,7 @@ export class PageHandle {
    */
   async waitCfGone(maxSec = 90) {
     let reloaded = false;
-    let lastHref = "";
+    let navigatedClean = false;
 
     for (let i = 0; i < maxSec; i++) {
       const st = await this.evaluate<{
@@ -148,36 +148,39 @@ export class PageHandle {
       }>(CHALLENGE_EXPR);
       const hasCf = await this.hasCfClearance();
 
-      if (!st.challenge || st.normal) return;
-      if (hasCf && st.cfUrl && !reloaded) {
+      if (st.normal || !st.challenge) return;
+
+      if (hasCf && st.cfUrl && !navigatedClean) {
+        navigatedClean = true;
+        await this.send("Page.navigate", { url: "https://www.daft.ie/" });
+        await sleep(4000);
+        continue;
+      }
+
+      if (hasCf && !reloaded && i >= 2) {
         reloaded = true;
         await this.send("Page.reload", { ignoreCache: false });
         await sleep(3500);
         continue;
       }
-      if (hasCf && !st.cfUrl && i >= 3) {
-        // Cookie present but page still spinning — reload once
-        if (!reloaded) {
-          reloaded = true;
-          await this.send("Page.reload", { ignoreCache: false });
-          await sleep(3500);
-          continue;
-        }
-        if (st.normal) return;
-      }
 
-      if (!hasCf && i > 0 && i % 3 === 0) {
+      if (i > 0 && i % 2 === 0) {
         await this.clickTurnstile();
       }
 
-      if (hasCf && st.href !== lastHref && !st.challenge) return;
-      lastHref = st.href;
       await sleep(1000);
     }
 
-    const last = await this.evaluate<{ title: string; href: string }>(
-      `({ title: document.title, href: location.href })`
+    const last = await this.evaluate<{ title: string; href: string; normal: boolean }>(
+      `({
+        title: document.title,
+        href: location.href,
+        normal: /property website|sign in|accept all|find your way/i.test(
+          document.title + ' ' + (document.body?.innerText || '')
+        ),
+      })`
     );
+    if (last.normal) return;
     throw new Error(
       `Cloudflare/security challenge timeout (${last.title} @ ${last.href}). ` +
         `Ensure host Chrome on DAFT_CHROME_CDP_URL is running with DISPLAY=:0.`

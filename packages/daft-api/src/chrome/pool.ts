@@ -28,11 +28,13 @@ import {
 } from "./cleanup";
 import {
   extractCfCookies,
+  hasFreshGlobalCf,
   loadGlobalCfCookies,
   mergeCfCookies,
   saveGlobalCfCookies,
   stripCfCookies,
 } from "./cf-cookies";
+import { warmCfClearance } from "./cf-warm";
 
 export type ChromePoolOptions = Partial<ChromePoolEnv> & {
   env?: NodeJS.ProcessEnv;
@@ -149,9 +151,16 @@ export class ChromePool {
       });
     }
     const b = await this.starting;
-    await this.syncGlobalCfCookies(b);
+    await this.ensureCfReady(b);
     this.touchIdle();
     return b;
+  }
+
+  /** Sync + actively refresh Cloudflare clearance when missing or near expiry. */
+  private async ensureCfReady(browser: CdpSession): Promise<void> {
+    await this.syncGlobalCfCookies(browser);
+    if (hasFreshGlobalCf(this.conf.cookieDir)) return;
+    await warmCfClearance(browser, this.conf, { force: true, maxSec: 120 });
   }
 
   /**
@@ -159,7 +168,7 @@ export class ChromePool {
    * so isolated BrowserContexts inherit clearance without a manual challenge.
    */
   private async syncGlobalCfCookies(browser: CdpSession): Promise<void> {
-    if (this.globalCfSynced && loadGlobalCfCookies(this.conf.cookieDir).length) {
+    if (this.globalCfSynced && hasFreshGlobalCf(this.conf.cookieDir)) {
       return;
     }
     let targetId: string | undefined;
@@ -237,6 +246,9 @@ export class ChromePool {
     if (password) u.password = password;
 
     const browser = await this.browser();
+    if (!hasFreshGlobalCf(this.conf.cookieDir)) {
+      await warmCfClearance(browser, this.conf, { force: true, maxSec: 90 });
+    }
 
     if (!u.browserContextId) {
       const created = await browser.send<{ browserContextId: string }>(

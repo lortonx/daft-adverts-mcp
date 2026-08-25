@@ -152,6 +152,21 @@ async function openMessageForm(page: PageHandle, listingUrl: string) {
         `Phone-only share ads cannot be contacted via send_enquiry.`
     );
   }
+
+  for (let i = 0; i < 20; i++) {
+    await pause(500);
+    const ready = await page.evaluate<boolean>(
+      `!!document.querySelector('textarea[name="message"], input[name="message"]')`
+    );
+    if (ready) return;
+    const blocked = await page.evaluate<boolean>(
+      `/just a moment|checking the security/i.test(document.title + ' ' + (document.body?.innerText||''))`
+    );
+    if (blocked) {
+      await page.waitCfGone(60);
+    }
+  }
+  throw new Error("chrome enquiry: message form did not open (CF or UI timeout)");
 }
 
 /** React-controlled inputs ignore plain .value — use native setter + InputEvent. */

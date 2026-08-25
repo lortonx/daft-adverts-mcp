@@ -74,3 +74,26 @@ export function mergeCfCookies(
 export function extractCfCookies(cookies: StoredCookie[]): StoredCookie[] {
   return cookies.filter(isCfCookie);
 }
+
+/** Expiry unix seconds embedded in cf_clearance value (Cloudflare format). */
+export function cfClearanceExpiresAt(value: string): number | null {
+  const m = value.match(/-(\d{10})-1\.2\.1\.1-/);
+  return m ? Number(m[1]) : null;
+}
+
+export function isCfClearanceFresh(
+  c: StoredCookie,
+  minTtlSec = 3600,
+  nowSec = Date.now() / 1000
+): boolean {
+  if (!/^cf_clearance$/i.test(c.name)) return false;
+  const exp = c.expires && c.expires > 0 ? c.expires : cfClearanceExpiresAt(c.value);
+  if (!exp || !Number.isFinite(exp)) return true;
+  return exp - nowSec > minTtlSec;
+}
+
+export function hasFreshGlobalCf(cookieDir: string, minTtlSec = 3600): boolean {
+  return loadGlobalCfCookies(cookieDir).some((c) =>
+    isCfClearanceFresh(c, minTtlSec)
+  );
+}

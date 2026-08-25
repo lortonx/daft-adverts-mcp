@@ -22,6 +22,8 @@ import {
   saveGlobalCfCookies,
   loadGlobalCfCookies,
   stripCfCookies,
+  isCfClearanceFresh,
+  cfClearanceExpiresAt,
 } from "../src/chrome/cf-cookies";
 import { writeFileSync, mkdirSync, existsSync, utimesSync } from "node:fs";
 
@@ -208,5 +210,18 @@ describe("cf cookies", () => {
     expect(cleaned).toHaveLength(1);
     expect(cleaned[0]?.name).toBe("session");
     expect(isCfChallengeCookie({ name: "cf_chl_rc_ni", value: "1", domain: ".daft.ie" })).toBe(true);
+  });
+
+  it("isCfClearanceFresh respects embedded expiry", () => {
+    const future = Math.floor(Date.now() / 1000) + 7200;
+    const cookie = {
+      name: "cf_clearance",
+      value: `x-${future}-1.2.1.1-y`,
+      domain: ".daft.ie",
+    };
+    expect(isCfClearanceFresh(cookie, 3600)).toBe(true);
+    expect(cfClearanceExpiresAt(cookie.value)).toBe(future);
+    const past = Math.floor(Date.now() / 1000) + 60;
+    expect(isCfClearanceFresh({ ...cookie, value: `x-${past}-1.2.1.1-y` }, 3600)).toBe(false);
   });
 });
