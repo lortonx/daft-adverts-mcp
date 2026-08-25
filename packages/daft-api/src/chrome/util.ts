@@ -64,6 +64,12 @@ export type ChromePoolEnv = {
   wipeProfileOnStop: boolean;
   /** Drop cookie JSON older than this (default 30d). 0 = never prune by age. */
   cookieMaxAgeMs: number;
+  /**
+   * Attach to an already-running Chrome CDP HTTP endpoint
+   * (e.g. `http://172.17.0.1:9222` host Chrome on real display).
+   * When set, the pool does not spawn Chrome/Xvfb and will not kill the browser.
+   */
+  cdpUrl?: string;
 };
 
 function envFlag(env: NodeJS.ProcessEnv, key: string, defaultTrue: boolean): boolean {
@@ -83,6 +89,10 @@ export function resolveChromePoolEnv(
     cookieMaxAgeRaw === undefined || cookieMaxAgeRaw === ""
       ? 30 * 24 * 60 * 60 * 1000
       : Number(cookieMaxAgeRaw);
+  const cdpUrl =
+    env.DAFT_CHROME_CDP_URL?.trim() ||
+    env.CHROME_CDP_URL?.trim() ||
+    undefined;
   return {
     chromePath:
       env.CHROME_PATH?.trim() ||
@@ -93,13 +103,17 @@ export function resolveChromePoolEnv(
     debuggingPort: Number(env.DAFT_CHROME_DEBUG_PORT ?? 9339) || 9339,
     idleMs: Number(env.DAFT_CHROME_IDLE_MS ?? 90_000) || 90_000,
     xvfb:
-      env.DAFT_CHROME_XVFB === "1" ||
-      env.DAFT_CHROME_XVFB === "true" ||
-      (!env.DISPLAY && process.platform === "linux"),
+      !cdpUrl &&
+      (env.DAFT_CHROME_XVFB === "1" ||
+        env.DAFT_CHROME_XVFB === "true" ||
+        (!env.DISPLAY && process.platform === "linux")),
     display: env.DAFT_CHROME_DISPLAY?.trim() || env.DISPLAY?.trim() || ":99",
     windowSize: env.DAFT_CHROME_WINDOW_SIZE?.trim() || "1280,900",
-    wipeProfileOnStop: envFlag(env, "DAFT_CHROME_WIPE_PROFILE", true),
+    wipeProfileOnStop: cdpUrl
+      ? false
+      : envFlag(env, "DAFT_CHROME_WIPE_PROFILE", true),
     cookieMaxAgeMs: Number.isFinite(cookieMaxAgeMs) ? cookieMaxAgeMs : 0,
+    cdpUrl,
   };
 }
 

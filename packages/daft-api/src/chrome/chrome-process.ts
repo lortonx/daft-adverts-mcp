@@ -1,5 +1,7 @@
 /**
- * Spawn headed Chrome with remote debugging (Cloudflare-friendly).
+ * Spawn headed Chrome with remote debugging, or attach to an existing CDP endpoint.
+ * Pure `--headless=new` / Docker+Xvfb often fail Cloudflare on www.daft.ie —
+ * prefer attaching to a host Chrome on a real display (`DAFT_CHROME_CDP_URL`).
  */
 import { spawn, type ChildProcess } from "node:child_process";
 import { mkdirSync } from "node:fs";
@@ -7,19 +9,40 @@ import { connectCdp, waitForDebugger, type CdpSession } from "./cdp";
 import type { ChromePoolEnv } from "./util";
 import { XvfbProcess } from "./xvfb";
 
+function rewriteWsHost(wsUrl: string, httpBase: string): string {
+  try {
+    const http = new URL(httpBase);
+    const ws = new URL(wsUrl);
+    ws.hostname = http.hostname;
+    if (http.port) ws.port = http.port;
+    return ws.toString();
+  } catch {
+    return wsUrl;
+  }
+}
+
 export class ChromeProcess {
   private chrome: ChildProcess | null = null;
   private xvfb: XvfbProcess | null = null;
+  private attached = false;
   browser: CdpSession | null = null;
 
   constructor(private readonly env: ChromePoolEnv) {}
 
   get running() {
-    return Boolean(this.chrome && this.browser?.alive);
+    return Boolean(this.browser?.alive);
+  }
+
+  get isAttached() {
+    return this.attached;
   }
 
   async start(): Promise<CdpSession> {
     if (this.running && this.browser) return this.browser;
+
+    if (this.env.cdpUrl) {
+      return this.attach(this.env.cdpUrl);
+    }
 
     mkdirSync(this.env.userDataDir, { recursive: true });
 
@@ -37,6 +60,7 @@ export class ChromeProcess {
     const args = [
       `--remote-debugging-port=${this.env.debuggingPort}`,
       `--user-data-dir=${this.env.userDataDir}`,
+      "--remote-allow-origins=*",
       "--no-first-run",
       "--no-default-browser-check",
       `--window-size=${this.env.windowSize}`,
@@ -63,7 +87,23 @@ export class ChromeProcess {
     });
 
     const ver = await waitForDebugger(this.env.debuggingPort);
+    this.attached = false;
     this.browser = await connectCdp(ver.webSocketDebuggerUrl);
+    await this.browser.send("Target.setDiscoverTargets", { discover: true });
+    return this.browser;
+  }
+
+  private async attach(cdpHttpUrl: string): Promise<CdpSession> {
+    const base = cdpHttpUrl.replace(/\/$/, "");
+    const ver = (await (
+      await fetch(`${base}/json/version`)
+    ).json()) as { webSocketDebuggerUrl: string; Browser?: string };
+    if (!ver.webSocketDebuggerUrl) {
+      throw new Error(`CDP attach failed: no webSocketDebuggerUrl at ${base}`);
+    }
+    const ws = rewriteWsHost(ver.webSocketDebuggerUrl, base);
+    this.attached = true;
+    this.browser = await connectCdp(ws);
     await this.browser.send("Target.setDiscoverTargets", { discover: true });
     return this.browser;
   }
@@ -75,6 +115,11 @@ export class ChromeProcess {
       /* ignore */
     }
     this.browser = null;
+    // Never kill an attached host Chrome — only disconnect CDP.
+    if (this.attached) {
+      this.attached = false;
+      return;
+    }
     if (this.chrome) {
       try {
         this.chrome.kill("SIGTERM");

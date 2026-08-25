@@ -58,17 +58,57 @@ export class PageHandle {
     await sleep(600);
   }
 
-  async waitCfGone(maxSec = 40) {
+  async waitCfGone(maxSec = 90) {
+    // Host Chrome often needs a real click on the Turnstile/checkbox area.
+    const clickPoints: Array<[number, number]> = [
+      [640, 400],
+      [200, 400],
+      [640, 500],
+      [400, 450],
+    ];
+    await this.send("Page.addScriptToEvaluateOnNewDocument", {
+      source: `Object.defineProperty(navigator,'webdriver',{get:()=>undefined});`,
+    }).catch(() => undefined);
+
     for (let i = 0; i < maxSec; i++) {
-      const st = await this.evaluate<{ challenge: boolean }>(`({
-        challenge: /just a moment|checking the security/i.test(
+      const st = await this.evaluate<{
+        challenge: boolean;
+        title: string;
+        href: string;
+      }>(`({
+        challenge: /just a moment|checking the security|security check/i.test(
           document.title + ' ' + (document.body?.innerText || '')
-        ),
+        ) || /__cf_chl|cf-challenge|challenges\.cloudflare/i.test(location.href + document.documentElement.innerHTML.slice(0, 2000)),
+        title: document.title,
+        href: location.href,
       })`);
       if (!st.challenge) return;
+      if (i > 0 && i % 3 === 0) {
+        const [x, y] = clickPoints[(i / 3) % clickPoints.length | 0]!;
+        await this.send("Input.dispatchMouseEvent", {
+          type: "mousePressed",
+          x,
+          y,
+          button: "left",
+          clickCount: 1,
+        });
+        await this.send("Input.dispatchMouseEvent", {
+          type: "mouseReleased",
+          x,
+          y,
+          button: "left",
+          clickCount: 1,
+        });
+      }
       await sleep(1000);
     }
-    throw new Error("Cloudflare challenge timeout");
+    const last = await this.evaluate<{ title: string; href: string }>(
+      `({ title: document.title, href: location.href })`
+    );
+    throw new Error(
+      `Cloudflare/security challenge timeout (${last.title} @ ${last.href}). ` +
+        `Use host Chrome on a real display (DAFT_CHROME_CDP_URL) and pass the check once.`
+    );
   }
 
   async getCookies(): Promise<StoredCookie[]> {

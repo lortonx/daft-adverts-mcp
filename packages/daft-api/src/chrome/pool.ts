@@ -62,6 +62,7 @@ export class ChromePool {
       windowSize: opts.windowSize ?? base.windowSize,
       wipeProfileOnStop: opts.wipeProfileOnStop ?? base.wipeProfileOnStop,
       cookieMaxAgeMs: opts.cookieMaxAgeMs ?? base.cookieMaxAgeMs,
+      cdpUrl: opts.cdpUrl ?? base.cdpUrl,
     };
     mkdirSync(this.conf.cookieDir, { recursive: true });
     pruneStaleCookieFiles(this.conf.cookieDir, this.conf.cookieMaxAgeMs);
