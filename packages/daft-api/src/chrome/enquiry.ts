@@ -125,8 +125,12 @@ async function openMessageForm(page: PageHandle, listingUrl: string) {
   await page.acceptCookies();
   const clicked = await page.evaluate<string | null>(`(() => {
     const el = [...document.querySelectorAll('button, a, [role=button]')]
-      .find(e => /^\\s*MESSAGE\\s*$/i.test((e.innerText||'').trim())
-        || /message/i.test(e.getAttribute('aria-label')||''));
+      .find(e => {
+        const t = (e.innerText||'').trim();
+        const a = e.getAttribute('aria-label')||'';
+        return /^\\s*(MESSAGE|EMAIL)\\s*$/i.test(t)
+          || /message|email|enquire|contact/i.test(a);
+      });
     if (!el) return null;
     el.click();
     return (el.innerText || el.getAttribute('aria-label') || '').trim();
@@ -136,7 +140,18 @@ async function openMessageForm(page: PageHandle, listingUrl: string) {
   if (/auth\.daft\.ie|\/auth\/signin/i.test(href)) {
     throw new Error("chrome enquiry: MESSAGE redirected to login");
   }
-  if (!clicked) throw new Error("chrome enquiry: MESSAGE button not found");
+  if (!clicked) {
+    const hint = await page.evaluate<string>(`(() => {
+      const labels = [...document.querySelectorAll('button, a, [role=button]')]
+        .map(e => (e.innerText||'').trim())
+        .filter(t => /^(CALL|EMAIL|MESSAGE|SMS)$/i.test(t));
+      return labels.slice(0,8).join(',') || 'none';
+    })()`);
+    throw new Error(
+      `chrome enquiry: no MESSAGE/EMAIL form on listing (visible contact: ${hint}). ` +
+        `Phone-only share ads cannot be contacted via send_enquiry.`
+    );
+  }
 }
 
 /** React-controlled inputs ignore plain .value — use native setter + InputEvent. */
