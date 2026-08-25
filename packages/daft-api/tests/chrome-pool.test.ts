@@ -15,6 +15,14 @@ import {
   pruneStaleCookieFiles,
   wipeChromeProfile,
 } from "../src/chrome/cleanup";
+import {
+  extractCfCookies,
+  isCfChallengeCookie,
+  mergeCfCookies,
+  saveGlobalCfCookies,
+  loadGlobalCfCookies,
+  stripCfCookies,
+} from "../src/chrome/cf-cookies";
 import { writeFileSync, mkdirSync, existsSync, utimesSync } from "node:fs";
 
 describe("chrome util", () => {
@@ -154,5 +162,51 @@ describe("chrome cleanup", () => {
     expect(existsSync(newP)).toBe(true);
     expect(deleteCookieFile(dir, "nobody@x.com")).toBe(false);
     rmSync(dir, { recursive: true, force: true });
+  });
+});
+
+describe("cf cookies", () => {
+  it("mergeCfCookies overlays global cf onto user jar", () => {
+    const user = [
+      {
+        name: "session",
+        value: "x",
+        domain: ".daft.ie",
+      },
+    ];
+    const global = [
+      {
+        name: "cf_clearance",
+        value: "abc",
+        domain: ".daft.ie",
+      },
+    ];
+    const merged = mergeCfCookies(user, global);
+    expect(merged).toHaveLength(2);
+    expect(merged.some((c) => c.name === "cf_clearance")).toBe(true);
+  });
+
+  it("save/load global cf roundtrip", () => {
+    const dir = mkdtempSync(join(tmpdir(), "daft-cf-"));
+    saveGlobalCfCookies(dir, [
+      { name: "cf_clearance", value: "tok", domain: ".daft.ie" },
+      { name: "session", value: "ignore", domain: ".daft.ie" },
+    ]);
+    const loaded = loadGlobalCfCookies(dir);
+    expect(loaded).toHaveLength(1);
+    expect(loaded[0]?.name).toBe("cf_clearance");
+    expect(extractCfCookies(loaded)).toHaveLength(1);
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("stripCfCookies removes challenge state cookies", () => {
+    const cleaned = stripCfCookies([
+      { name: "session", value: "x", domain: ".daft.ie" },
+      { name: "cf_clearance", value: "y", domain: ".daft.ie" },
+      { name: "cf_chl_rc_ni", value: "2", domain: "www.daft.ie" },
+    ]);
+    expect(cleaned).toHaveLength(1);
+    expect(cleaned[0]?.name).toBe("session");
+    expect(isCfChallengeCookie({ name: "cf_chl_rc_ni", value: "1", domain: ".daft.ie" })).toBe(true);
   });
 });

@@ -66,7 +66,7 @@ Env (monorepo `.env`): `DAFT_CLIENT_ID`, `DAFT_REFRESH_TOKEN`, `DAFT_ACCESS_TOKE
 
 Optional outbound proxy: `HTTP_PROXY` (HTTP URL; Bun). See root README.
 
-reCAPTCHA / enquiry: **Chrome web form only** (`sendEnquiryViaChrome` / `src/chrome/`). Phone LSPosed TCP mint was removed.
+Enquiry: **Chrome web form only** (`sendEnquiryViaChrome` / `src/chrome/`).
 
 ## Search
 

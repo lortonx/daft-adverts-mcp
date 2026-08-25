@@ -78,7 +78,7 @@ docker run --rm -p 3100:3100 --env-file .env \
   daft-mcp-host
 ```
 
-Enquiry is Chrome web form only (`sendEnquiryViaChrome`). Phone LSPosed TCP mint was removed.
+Enquiry is Chrome web form only (`sendEnquiryViaChrome`).
 
 Optional: persist login tokens across restarts:
 

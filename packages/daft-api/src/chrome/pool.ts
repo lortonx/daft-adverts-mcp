@@ -26,6 +26,13 @@ import {
   pruneStaleCookieFiles,
   wipeChromeProfile,
 } from "./cleanup";
+import {
+  extractCfCookies,
+  loadGlobalCfCookies,
+  mergeCfCookies,
+  saveGlobalCfCookies,
+  stripCfCookies,
+} from "./cf-cookies";
 
 export type ChromePoolOptions = Partial<ChromePoolEnv> & {
   env?: NodeJS.ProcessEnv;
@@ -49,6 +56,7 @@ export class ChromePool {
   private activeLeases = 0;
   /** One shared host Chrome → serialize all tabs (not only per-email). */
   private readonly cdpMutex = new Mutex();
+  private globalCfSynced = false;
 
   constructor(opts: ChromePoolOptions = {}) {
     const base = resolveChromePoolEnv(opts.env ?? process.env);
@@ -94,6 +102,7 @@ export class ChromePool {
     for (const u of this.users.values()) {
       u.browserContextId = undefined;
     }
+    this.globalCfSynced = false;
     if (this.conf.wipeProfileOnStop) {
       wipeChromeProfile(this.conf.userDataDir);
     }
@@ -140,15 +149,62 @@ export class ChromePool {
       });
     }
     const b = await this.starting;
+    await this.syncGlobalCfCookies(b);
     this.touchIdle();
     return b;
+  }
+
+  /**
+   * Copy cf_clearance from host Chrome default profile into _cf_global.json
+   * so isolated BrowserContexts inherit clearance without a manual challenge.
+   */
+  private async syncGlobalCfCookies(browser: CdpSession): Promise<void> {
+    if (this.globalCfSynced && loadGlobalCfCookies(this.conf.cookieDir).length) {
+      return;
+    }
+    let targetId: string | undefined;
+    try {
+      ({ targetId } = await browser.send<{ targetId: string }>(
+        "Target.createTarget",
+        { url: "about:blank" }
+      ));
+      const attached = await browser.send<{ sessionId: string }>(
+        "Target.attachToTarget",
+        { targetId, flatten: true }
+      );
+      await browser.send("Network.enable", {}, attached.sessionId);
+      const r = await browser.send<{ cookies: StoredCookie[] }>(
+        "Network.getAllCookies",
+        {},
+        attached.sessionId
+      );
+      const cf = extractCfCookies(r.cookies ?? []);
+      if (cf.length) {
+        saveGlobalCfCookies(this.conf.cookieDir, cf);
+        console.error(`[chrome-pool] synced ${cf.length} global CF cookie(s)`);
+      }
+      this.globalCfSynced = true;
+    } catch (err) {
+      console.error(
+        `[chrome-pool] global CF sync failed: ${err instanceof Error ? err.message : String(err)}`
+      );
+    } finally {
+      if (targetId) {
+        try {
+          await browser.send("Target.closeTarget", { targetId });
+        } catch {
+          /* ignore */
+        }
+      }
+    }
   }
 
   private loadCookies(email: string): StoredCookie[] {
     const p = cookieStorePath(this.conf.cookieDir, email);
     if (!existsSync(p)) return [];
     try {
-      return JSON.parse(readFileSync(p, "utf8")) as StoredCookie[];
+      const raw = JSON.parse(readFileSync(p, "utf8")) as StoredCookie[];
+      return stripCfCookies(raw);
     } catch {
       return [];
     }
@@ -221,7 +277,10 @@ export class ChromePool {
     const page = new PageHandle(browser, attached.sessionId, targetId);
     await page.enable();
 
-    const cookies = this.loadCookies(u.email);
+    const cookies = mergeCfCookies(
+      this.loadCookies(u.email),
+      loadGlobalCfCookies(this.conf.cookieDir)
+    );
     if (cookies.length) await page.setCookies(cookies);
 
     this.activeLeases++;
@@ -234,11 +293,10 @@ export class ChromePool {
       disposed = true;
       try {
         const latest = await page.getCookies();
-        // Persist daft + Cloudflare clearance for warmer next jobs
-        const keep = latest.filter(
-          (c) =>
-            /daft\.ie|keycloak|cloudflare/i.test(c.domain) ||
-            /^cf_clearance$|^__cf_bm$/i.test(c.name)
+        saveGlobalCfCookies(this.conf.cookieDir, latest);
+        // Persist daft/keycloak session only — CF lives in _cf_global.json
+        const keep = stripCfCookies(latest).filter((c) =>
+          /daft\.ie|keycloak/i.test(c.domain)
         );
         if (keep.length) this.saveCookies(u.email, keep);
       } catch {

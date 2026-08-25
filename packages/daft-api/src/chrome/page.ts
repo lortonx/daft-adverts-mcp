@@ -5,6 +5,28 @@ import { setTimeout as sleep } from "node:timers/promises";
 import type { CdpSession } from "./cdp";
 import type { StoredCookie } from "./util";
 
+const STEALTH_SCRIPT = `(() => {
+  Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
+  if (!window.chrome) window.chrome = { runtime: {} };
+})();`;
+
+const CHALLENGE_EXPR = `(() => {
+  const title = document.title || '';
+  const body = document.body?.innerText || '';
+  const href = location.href || '';
+  const blob = title + ' ' + body;
+  const cfUrl = /__cf_chl|cf_chl_rt|challenges\\.cloudflare/i.test(href);
+  const cfText = /just a moment|checking the security|security check/i.test(blob);
+  const normal = /property website|sign in|accept all|find your way/i.test(blob);
+  return {
+    challenge: (cfText || cfUrl) && !normal,
+    cfUrl,
+    title,
+    href,
+    normal,
+  };
+})()`;
+
 export class PageHandle {
   networkLog: Array<{ url: string; status: number }> = [];
 
@@ -12,11 +34,7 @@ export class PageHandle {
     private readonly browser: CdpSession,
     readonly sessionId: string,
     readonly targetId: string
-  ) {
-    // Network events arrive on the page session via flat sessionId routing —
-    // our CdpSession only sees browser-level messages unless we use sessionId
-    // on send. For response logging we poll via Runtime after submit instead.
-  }
+  ) {}
 
   send<T = unknown>(method: string, params: Record<string, unknown> = {}) {
     return this.browser.send<T>(method, params, this.sessionId);
@@ -26,6 +44,9 @@ export class PageHandle {
     await this.send("Page.enable");
     await this.send("Runtime.enable");
     await this.send("Network.enable");
+    await this.send("Page.addScriptToEvaluateOnNewDocument", {
+      source: STEALTH_SCRIPT,
+    }).catch(() => undefined);
   }
 
   async navigate(url: string, waitMs = 4000) {
@@ -58,56 +79,108 @@ export class PageHandle {
     await sleep(600);
   }
 
+  private async hasCfClearance(): Promise<boolean> {
+    const r = await this.send<{ cookies: StoredCookie[] }>(
+      "Network.getAllCookies"
+    );
+    return (r.cookies ?? []).some((c) => /^cf_clearance$/i.test(c.name));
+  }
+
+  private async clickAt(x: number, y: number) {
+    for (const type of ["mouseMoved", "mousePressed", "mouseReleased"] as const) {
+      await this.send("Input.dispatchMouseEvent", {
+        type,
+        x,
+        y,
+        button: "left",
+        clickCount: type === "mouseReleased" ? 1 : 0,
+      });
+    }
+  }
+
+  /** Click Cloudflare Turnstile checkbox area (iframe is cross-origin). */
+  private async clickTurnstile(): Promise<boolean> {
+    const pt = await this.evaluate<{
+      x: number;
+      y: number;
+      kind: string;
+    } | null>(`(() => {
+      const iframe = [...document.querySelectorAll('iframe')].find(f => {
+        const s = (f.src || '') + (f.title || '');
+        return /challenges\\.cloudflare|turnstile|cf-chl/i.test(s);
+      });
+      if (iframe) {
+        const b = iframe.getBoundingClientRect();
+        if (b.width < 2 || b.height < 2) return null;
+        return { x: b.x + 28, y: b.y + b.height / 2, kind: 'iframe' };
+      }
+      const host = document.querySelector('#cf-turnstile, .cf-turnstile, [data-sitekey]');
+      if (host) {
+        const b = host.getBoundingClientRect();
+        if (b.width < 2 || b.height < 2) return null;
+        return { x: b.x + 28, y: b.y + b.height / 2, kind: 'host' };
+      }
+      return null;
+    })()`);
+    if (pt) {
+      await this.clickAt(pt.x, pt.y);
+      return true;
+    }
+    await this.clickAt(640, 450);
+    return false;
+  }
+
+  /**
+   * Wait until Cloudflare challenge clears. Seeds cf_clearance from the pool
+   * should make this fast; otherwise clicks Turnstile and reloads once.
+   */
   async waitCfGone(maxSec = 90) {
-    // Host Chrome often needs a real click on the Turnstile/checkbox area.
-    const clickPoints: Array<[number, number]> = [
-      [640, 400],
-      [200, 400],
-      [640, 500],
-      [400, 450],
-    ];
-    await this.send("Page.addScriptToEvaluateOnNewDocument", {
-      source: `Object.defineProperty(navigator,'webdriver',{get:()=>undefined});`,
-    }).catch(() => undefined);
+    let reloaded = false;
+    let lastHref = "";
 
     for (let i = 0; i < maxSec; i++) {
       const st = await this.evaluate<{
         challenge: boolean;
+        cfUrl: boolean;
         title: string;
         href: string;
-      }>(`({
-        challenge: /just a moment|checking the security|security check/i.test(
-          document.title + ' ' + (document.body?.innerText || '')
-        ) || /__cf_chl|cf-challenge|challenges\.cloudflare/i.test(location.href + document.documentElement.innerHTML.slice(0, 2000)),
-        title: document.title,
-        href: location.href,
-      })`);
-      if (!st.challenge) return;
-      if (i > 0 && i % 3 === 0) {
-        const [x, y] = clickPoints[(i / 3) % clickPoints.length | 0]!;
-        await this.send("Input.dispatchMouseEvent", {
-          type: "mousePressed",
-          x,
-          y,
-          button: "left",
-          clickCount: 1,
-        });
-        await this.send("Input.dispatchMouseEvent", {
-          type: "mouseReleased",
-          x,
-          y,
-          button: "left",
-          clickCount: 1,
-        });
+        normal: boolean;
+      }>(CHALLENGE_EXPR);
+      const hasCf = await this.hasCfClearance();
+
+      if (!st.challenge || st.normal) return;
+      if (hasCf && st.cfUrl && !reloaded) {
+        reloaded = true;
+        await this.send("Page.reload", { ignoreCache: false });
+        await sleep(3500);
+        continue;
       }
+      if (hasCf && !st.cfUrl && i >= 3) {
+        // Cookie present but page still spinning — reload once
+        if (!reloaded) {
+          reloaded = true;
+          await this.send("Page.reload", { ignoreCache: false });
+          await sleep(3500);
+          continue;
+        }
+        if (st.normal) return;
+      }
+
+      if (!hasCf && i > 0 && i % 3 === 0) {
+        await this.clickTurnstile();
+      }
+
+      if (hasCf && st.href !== lastHref && !st.challenge) return;
+      lastHref = st.href;
       await sleep(1000);
     }
+
     const last = await this.evaluate<{ title: string; href: string }>(
       `({ title: document.title, href: location.href })`
     );
     throw new Error(
       `Cloudflare/security challenge timeout (${last.title} @ ${last.href}). ` +
-        `Use host Chrome on a real display (DAFT_CHROME_CDP_URL) and pass the check once.`
+        `Ensure host Chrome on DAFT_CHROME_CDP_URL is running with DISPLAY=:0.`
     );
   }
 
