@@ -45,6 +45,17 @@ describe("chrome util", () => {
     expect(e.xvfb).toBe(true);
     expect(e.cookieDir).toContain("cookies");
   });
+
+  it("cdpUrl disables default xvfb but keeps url for attach-with-spawn-fallback", () => {
+    const e = resolveChromePoolEnv({
+      DAFT_CHROME_DATA_DIR: "/tmp/daft-chrome-test",
+      DAFT_CHROME_CDP_URL: "http://10.0.1.1:9222",
+      DAFT_CHROME_XVFB: "1",
+    });
+    expect(e.cdpUrl).toBe("http://10.0.1.1:9222");
+    expect(e.xvfb).toBe(false);
+    expect(e.wipeProfileOnStop).toBe(false);
+  });
 });
 
 describe("Mutex", () => {

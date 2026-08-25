@@ -119,10 +119,8 @@ export class ChromePool {
       this.touchIdle();
       return;
     }
-    // Attach mode: keep the CDP websocket (and host Chrome) alive.
-    // Disconnecting after idleMs causes "CDP session closed" / client
-    // "Socket connection closed" on the next burst of send_enquiry calls.
-    if (this.conf.cdpUrl) {
+    // Keep host attach CDP connected; spawned local Chrome may idle-kill.
+    if (this.proc.isAttached) {
       return;
     }
     await this.proc.stop();

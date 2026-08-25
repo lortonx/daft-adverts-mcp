@@ -2,6 +2,7 @@
  * Spawn headed Chrome with remote debugging, or attach to an existing CDP endpoint.
  * Pure `--headless=new` / Docker+Xvfb often fail Cloudflare on www.daft.ie —
  * prefer attaching to a host Chrome on a real display (`DAFT_CHROME_CDP_URL`).
+ * If that CDP is dead, fall back to on-demand spawn (Xvfb/local) automatically.
  */
 import { spawn, type ChildProcess } from "node:child_process";
 import { mkdirSync } from "node:fs";
@@ -18,6 +19,31 @@ function rewriteWsHost(wsUrl: string, httpBase: string): string {
     return ws.toString();
   } catch {
     return wsUrl;
+  }
+}
+
+async function probeCdpVersion(
+  cdpHttpUrl: string,
+  timeoutMs = 2500
+): Promise<{ webSocketDebuggerUrl: string; Browser?: string }> {
+  const base = cdpHttpUrl.replace(/\/$/, "");
+  const ac = new AbortController();
+  const t = setTimeout(() => ac.abort(), timeoutMs);
+  try {
+    const res = await fetch(`${base}/json/version`, { signal: ac.signal });
+    if (!res.ok) {
+      throw new Error(`CDP /json/version HTTP ${res.status}`);
+    }
+    const ver = (await res.json()) as {
+      webSocketDebuggerUrl?: string;
+      Browser?: string;
+    };
+    if (!ver.webSocketDebuggerUrl) {
+      throw new Error(`CDP attach failed: no webSocketDebuggerUrl at ${base}`);
+    }
+    return ver as { webSocketDebuggerUrl: string; Browser?: string };
+  } finally {
+    clearTimeout(t);
   }
 }
 
@@ -41,13 +67,56 @@ export class ChromeProcess {
     if (this.running && this.browser) return this.browser;
 
     if (this.env.cdpUrl) {
-      return this.attach(this.env.cdpUrl);
+      try {
+        return await this.attach(this.env.cdpUrl);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        console.error(
+          `[chrome] CDP attach failed (${this.env.cdpUrl}): ${msg}; spawning on-demand Chrome`
+        );
+        try {
+          this.browser?.close();
+        } catch {
+          /* ignore */
+        }
+        this.browser = null;
+        this.attached = false;
+      }
     }
 
+    return this.spawnLocal();
+  }
+
+  private async attach(cdpHttpUrl: string): Promise<CdpSession> {
+    const base = cdpHttpUrl.replace(/\/$/, "");
+    // brief retry — host keepalive may be mid-restart
+    let lastErr: unknown;
+    for (let i = 0; i < 3; i++) {
+      try {
+        const ver = await probeCdpVersion(base);
+        const ws = rewriteWsHost(ver.webSocketDebuggerUrl, base);
+        this.attached = true;
+        this.browser = await connectCdp(ws);
+        await this.browser.send("Target.setDiscoverTargets", { discover: true });
+        return this.browser;
+      } catch (err) {
+        lastErr = err;
+        await new Promise((r) => setTimeout(r, 400 * (i + 1)));
+      }
+    }
+    throw lastErr instanceof Error
+      ? lastErr
+      : new Error(`CDP attach failed: ${String(lastErr)}`);
+  }
+
+  private async spawnLocal(): Promise<CdpSession> {
     mkdirSync(this.env.userDataDir, { recursive: true });
 
     const procEnv = { ...process.env };
-    if (this.env.xvfb) {
+    const useXvfb =
+      this.env.xvfb ||
+      (!procEnv.DISPLAY && process.platform === "linux");
+    if (useXvfb) {
       this.xvfb = new XvfbProcess(this.env.display);
       await this.xvfb.start();
       procEnv.DISPLAY = this.xvfb.envDisplay;
@@ -89,21 +158,6 @@ export class ChromeProcess {
     const ver = await waitForDebugger(this.env.debuggingPort);
     this.attached = false;
     this.browser = await connectCdp(ver.webSocketDebuggerUrl);
-    await this.browser.send("Target.setDiscoverTargets", { discover: true });
-    return this.browser;
-  }
-
-  private async attach(cdpHttpUrl: string): Promise<CdpSession> {
-    const base = cdpHttpUrl.replace(/\/$/, "");
-    const ver = (await (
-      await fetch(`${base}/json/version`)
-    ).json()) as { webSocketDebuggerUrl: string; Browser?: string };
-    if (!ver.webSocketDebuggerUrl) {
-      throw new Error(`CDP attach failed: no webSocketDebuggerUrl at ${base}`);
-    }
-    const ws = rewriteWsHost(ver.webSocketDebuggerUrl, base);
-    this.attached = true;
-    this.browser = await connectCdp(ws);
     await this.browser.send("Target.setDiscoverTargets", { discover: true });
     return this.browser;
   }
