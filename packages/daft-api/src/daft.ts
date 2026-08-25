@@ -5,21 +5,11 @@
  * @module @daft-ie/api
  */
 
-import {
-  DEFAULT_RECAPTCHA_ACTION,
-  fetchRecaptchaToken,
-  preferShortRecaptcha,
-  preferredRecaptchaMaxLen,
-  recaptchaMintTries,
-  recaptchaSendRetries,
-  recaptchaTcpConfigured,
-} from "./recaptcha-tcp";
 import type {
   AdConvertResponse,
   AdOffers,
   AdRelistBody,
   AdRelistResponse,
-  AdReplyMessageBody,
   AdStateBody,
   AnalyticsEventBody,
   Area,
@@ -129,9 +119,6 @@ export class DaftApi {
   private refreshPromise: Promise<void> | null = null;
   private clientId: string;
   private onTokensChange?: (tokens: DaftTokensSnapshot | null) => void;
-  private mintRecaptchaToken?: () => Promise<{ token: string; action: string }>;
-  private recaptchaTcpHost?: string;
-  private recaptchaTcpPort?: number;
   private areaCache: Map<string, Area> | null = null;
 
   /** Endpoint paths extracted from the decompiled Android app. */
@@ -149,7 +136,6 @@ export class DaftApi {
     AD_DETAILS_LEGACY: "/old/v1/legacy/listing/{siteAdId}",
     REPORT_REASONS: "/old/v1/report/reasons",
     POST_REPORT_AD: "/old/v1/report",
-    POST_AD_MESSAGE: "/old/v4/reply",
     POST_TRACK_EVENT: "/old/v1/tracking",
     // Location API (common base)
     LOCATIONS_AUTOCOMPLETE: "/api/v1/locations/autocomplete",
@@ -244,9 +230,6 @@ export class DaftApi {
     this.autoRefresh = options.autoRefresh ?? true;
     this.clientId = resolveClientId(options.clientId);
     this.onTokensChange = options.onTokensChange;
-    this.mintRecaptchaToken = options.mintRecaptchaToken;
-    this.recaptchaTcpHost = options.recaptchaTcpHost;
-    this.recaptchaTcpPort = options.recaptchaTcpPort;
 
     const platform = options.platform ?? "web";
 
@@ -659,98 +642,6 @@ export class DaftApi {
       `${this.base("common")}${DaftApi.ENDPOINTS.POST_REPORT_AD}`,
       "POST",
       body
-    );
-  }
-
-  /**
-   * Send a reply/enquiry message for a listing.
-   * Attaches `Recaptcha-Token` + `Recaptcha-Action` under the hood:
-   * optional explicit token, else {@link DaftApiOptions.mintRecaptchaToken},
-   * else TCP mint via `DAFT_RECAPTCHA_TCP_HOST` (phone LSPosed).
-   * Action is always {@link DEFAULT_RECAPTCHA_ACTION} (`enquiry_form_submit`).
-   *
-   * Header names must match the Android app (`Recaptcha-Token` / `Recaptcha-Action`).
-   * Lowercase `recaptcha-*` is rejected with empty-body HTTP 403.
-   *
-   * Auto-mint path (no explicit token): prefers short tokens
-   * (`DAFT_RECAPTCHA_PREFER_SHORT`, `DAFT_RECAPTCHA_MINT_TRIES`) and remints on
-   * HTTP 403 up to `DAFT_RECAPTCHA_SEND_RETRIES` attempts.
-   */
-  async sendMessage(
-    body: AdReplyMessageBody,
-    recaptcha?: { token: string; action?: string }
-  ): Promise<void> {
-    const explicit = Boolean(recaptcha?.token?.trim());
-    const maxAttempts = explicit ? 1 : recaptchaSendRetries();
-    let lastError: unknown;
-
-    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-      const minted = await this.resolveRecaptcha(
-        explicit ? recaptcha : undefined
-      );
-      try {
-        return await this.fetchJson<void>(
-          `${this.base("common")}${DaftApi.ENDPOINTS.POST_AD_MESSAGE}`,
-          "POST",
-          {
-            tcAccepted: true,
-            ...body,
-          },
-          {
-            "Recaptcha-Token": minted.token,
-            "Recaptcha-Action": minted.action,
-          }
-        );
-      } catch (err) {
-        lastError = err;
-        const is403 = err instanceof ApiError && err.status === 403;
-        if (!is403 || explicit || attempt === maxAttempts) throw err;
-      }
-    }
-
-    throw lastError instanceof Error
-      ? lastError
-      : new Error(String(lastError ?? "sendMessage failed"));
-  }
-
-  private async resolveRecaptcha(
-    explicit?: { token: string; action?: string }
-  ): Promise<{ token: string; action: string }> {
-    if (explicit?.token?.trim()) {
-      return {
-        token: explicit.token.trim(),
-        action: DEFAULT_RECAPTCHA_ACTION,
-      };
-    }
-
-    const preferShort = preferShortRecaptcha();
-    const maxLen = preferredRecaptchaMaxLen();
-    const tries = preferShort ? recaptchaMintTries() : 1;
-    let last: { token: string; action: string } | null = null;
-
-    for (let i = 0; i < tries; i++) {
-      last = await this.mintRecaptchaOnce();
-      if (!preferShort || last.token.length < maxLen) return last;
-    }
-    return last!;
-  }
-
-  private async mintRecaptchaOnce(): Promise<{
-    token: string;
-    action: string;
-  }> {
-    if (this.mintRecaptchaToken) {
-      const minted = await this.mintRecaptchaToken();
-      return { token: minted.token, action: DEFAULT_RECAPTCHA_ACTION };
-    }
-    if (this.recaptchaTcpHost || recaptchaTcpConfigured()) {
-      return fetchRecaptchaToken({
-        host: this.recaptchaTcpHost,
-        port: this.recaptchaTcpPort,
-      });
-    }
-    throw new Error(
-      "reCAPTCHA mint not configured: set DAFT_RECAPTCHA_TCP_HOST (phone LSPosed TCP) or pass { token } / mintRecaptchaToken"
     );
   }
 

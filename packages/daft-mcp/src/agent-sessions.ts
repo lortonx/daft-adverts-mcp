@@ -1,4 +1,4 @@
-import { DaftApi, enquiryMode, getChromePool } from "@daft-ie/api";
+import { DaftApi, getChromePool } from "@daft-ie/api";
 import {
   deleteAgentSession,
   getAgentSession,
@@ -142,7 +142,7 @@ export class AgentSessionManager {
     this.usernames.delete(id);
     this.passwords.delete(id);
     deleteAgentSession(id);
-    if (username && enquiryMode() === "chrome") {
+    if (username) {
       try {
         getChromePool().clearUser(username);
       } catch {

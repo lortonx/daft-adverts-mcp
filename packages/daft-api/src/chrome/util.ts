@@ -126,8 +126,12 @@ function defaultChromePath(): string {
 
 export function enquiryMode(
   env: NodeJS.ProcessEnv = process.env
-): "chrome" | "tcp" | "auto" {
+): "chrome" {
   const v = (env.DAFT_ENQUIRY_MODE ?? "chrome").trim().toLowerCase();
-  if (v === "chrome" || v === "tcp" || v === "auto") return v;
+  if (v && v !== "chrome") {
+    console.error(
+      `[daft] DAFT_ENQUIRY_MODE=${v} ignored; only chrome enquiry is supported (phone TCP removed)`
+    );
+  }
   return "chrome";
 }

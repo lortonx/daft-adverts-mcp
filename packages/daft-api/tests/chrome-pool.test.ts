@@ -29,9 +29,9 @@ describe("chrome util", () => {
     expect(a.endsWith(".json")).toBe(true);
   });
 
-  it("enquiryMode parses env", () => {
+  it("enquiryMode is always chrome", () => {
     expect(enquiryMode({ DAFT_ENQUIRY_MODE: "chrome" })).toBe("chrome");
-    expect(enquiryMode({ DAFT_ENQUIRY_MODE: "TCP" })).toBe("tcp");
+    expect(enquiryMode({ DAFT_ENQUIRY_MODE: "TCP" })).toBe("chrome");
     expect(enquiryMode({})).toBe("chrome");
   });
 

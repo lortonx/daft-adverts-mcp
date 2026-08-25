@@ -515,15 +515,6 @@ export interface DaftApiOptions {
    * Pass `null` when the session is cleared. Use to persist tokens across process restarts.
    */
   onTokensChange?: (tokens: DaftTokensSnapshot | null) => void;
-  /**
-   * Override reCAPTCHA mint used by {@link DaftApi.sendMessage} when no explicit
-   * token is passed. Default: TCP mint via `DAFT_RECAPTCHA_TCP_HOST`.
-   */
-  mintRecaptchaToken?: () => Promise<{ token: string; action: string }>;
-  /** TCP mint host (overrides `DAFT_RECAPTCHA_TCP_HOST`). */
-  recaptchaTcpHost?: string;
-  /** TCP mint port (default 17373 / `DAFT_RECAPTCHA_TCP_PORT`). */
-  recaptchaTcpPort?: number;
 }
 
 /** Snapshot passed to {@link DaftApiOptions.onTokensChange}. */

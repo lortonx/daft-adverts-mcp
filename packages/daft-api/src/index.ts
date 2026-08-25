@@ -23,22 +23,6 @@
 
 export { ApiError, DaftApi, CLIENT_ID } from "./daft";
 export {
-  DEFAULT_RECAPTCHA_ACTION,
-  DEFAULT_RECAPTCHA_MINT_TRIES,
-  DEFAULT_RECAPTCHA_SEND_RETRIES,
-  DEFAULT_RECAPTCHA_TCP_PORT,
-  PREFERRED_RECAPTCHA_MAX_LEN,
-  fetchRecaptchaToken,
-  fetchRecaptchaTokenPreferShort,
-  preferShortRecaptcha,
-  preferredRecaptchaMaxLen,
-  recaptchaMintTries,
-  recaptchaSendRetries,
-  recaptchaTcpConfigured,
-  resolveRecaptchaTcpOptions,
-} from "./recaptcha-tcp";
-export type { RecaptchaMintResult, RecaptchaTcpOptions } from "./recaptcha-tcp";
-export {
   ChromePool,
   getChromePool,
   resetChromePoolForTests,

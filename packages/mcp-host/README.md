@@ -38,7 +38,7 @@ Env (root `.env` / `.env.example`):
 | `DAFT_AGENT_SESSIONS_FILE` | JSON DB of per-`agentId` refresh sessions |
 | `ADVERTS_*` | Adverts API keys / tokens — see [`../adverts-mcp`](../adverts-mcp) |
 | `HTTP_PROXY` | optional HTTP proxy for Bun API calls (search etc.) |
-| `DAFT_ENQUIRY_MODE` | default `chrome` (web form); `tcp` = legacy phone LSPosed |
+| `DAFT_ENQUIRY_MODE` | chrome only (ignored otherwise; phone TCP removed) |
 | `DAFT_CHROME_*` / `CHROME_PATH` | Chrome pool: Xvfb, idle kill, cookies under `/data/daft-chrome` |
 
 Keep the host running while clients are connected. Check:
@@ -78,7 +78,7 @@ docker run --rm -p 3100:3100 --env-file .env \
   daft-mcp-host
 ```
 
-Legacy phone TCP mint: `DAFT_ENQUIRY_MODE=tcp` + `DAFT_RECAPTCHA_TCP_HOST` (optional SOCKS). Not used by the Docker image by default.
+Enquiry is Chrome web form only (`sendEnquiryViaChrome`). Phone LSPosed TCP mint was removed.
 
 Optional: persist login tokens across restarts:
 

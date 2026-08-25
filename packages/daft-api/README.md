@@ -66,7 +66,7 @@ Env (monorepo `.env`): `DAFT_CLIENT_ID`, `DAFT_REFRESH_TOKEN`, `DAFT_ACCESS_TOKE
 
 Optional outbound proxy: `HTTP_PROXY` (HTTP URL; Bun). See root README.
 
-reCAPTCHA / enquiry: MCP defaults to **Chrome web form** (`DAFT_ENQUIRY_MODE=chrome`) — see `src/chrome/`. Legacy Android TCP mint: `DAFT_ENQUIRY_MODE=tcp` + `DAFT_RECAPTCHA_TCP_HOST`. Gateway still expects Pascal-Case `Recaptcha-Token` / `Recaptcha-Action` on the TCP path.
+reCAPTCHA / enquiry: **Chrome web form only** (`sendEnquiryViaChrome` / `src/chrome/`). Phone LSPosed TCP mint was removed.
 
 ## Search
 

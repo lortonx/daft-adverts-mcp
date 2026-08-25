@@ -1,7 +1,6 @@
 import {
   ApiError,
   DaftApi,
-  enquiryMode,
   getChromePool,
   sendEnquiryViaChrome,
   type Listing,
@@ -26,10 +25,6 @@ async function resolveListingUrl(
   throw new Error(
     `No canonicalUrl for adId=${adId}; cannot open web enquiry form`
   );
-}
-
-function useChromeEnquiry(): boolean {
-  return enquiryMode() === "chrome";
 }
 
 /** CDN/UI/ads junk — always dropped, including on detail=full. */
@@ -828,7 +823,7 @@ export function createServer(
     {
       title: "Send Daft listing enquiry",
       description:
-        "Send a listing enquiry after auth_login(agentId). Pass agentId + adId + message (+ optional name/email/phone; otherwise filled from get_enquiry_form). Do not pass captcha fields — captcha is minted server-side automatically.",
+        "Send a listing enquiry after auth_login(agentId) via Chrome web form. Pass agentId + adId + message (+ optional name/email/phone; otherwise filled from get_enquiry_form).",
       inputSchema: z.object({
         agentId: agentIdField,
         ...optionalCredentials,
@@ -895,77 +890,55 @@ export function createServer(
           };
         }
 
-        if (useChromeEnquiry()) {
-          const username =
-            args.username?.trim() ||
-            sessions.getUsername(args.agentId) ||
-            email;
-          const password =
-            args.password || sessions.getPassword(args.agentId);
-          if (!password) {
-            return {
-              content: [
-                {
-                  type: "text",
-                  text:
-                    "Chrome enquiry needs password in this process. Call auth_login(agentId, username, password) again (password is memory-only after restart).",
-                },
-              ],
-              isError: true,
-            };
-          }
-          const listingUrl = await resolveListingUrl(client, args.adId);
-          const pool = getChromePool();
-          pool.rememberPassword(username, password);
-          const result = await sendEnquiryViaChrome(pool, {
-            email: username,
-            password,
-            listingUrl,
-            message: args.message,
-            firstName,
-            lastName,
-            phone,
-            contactEmail: email,
-          });
-          if (!result.ok) {
-            return {
-              content: [
-                {
-                  type: "text",
-                  text: `Chrome enquiry failed: ${result.detail ?? "unknown"} (HTTP ${result.replyStatus ?? "n/a"})`,
-                },
-              ],
-              isError: true,
-            };
-          }
-          return ok({
-            ok: true,
-            adId: args.adId,
-            agentId: args.agentId.trim(),
-            via: "chrome",
-            replyStatus: result.replyStatus,
-          });
+        const username =
+          args.username?.trim() ||
+          sessions.getUsername(args.agentId) ||
+          email;
+        const password =
+          args.password || sessions.getPassword(args.agentId);
+        if (!password) {
+          return {
+            content: [
+              {
+                type: "text",
+                text:
+                  "Chrome enquiry needs password in this process. Call auth_login(agentId, username, password) again (password is memory-only after restart).",
+              },
+            ],
+            isError: true,
+          };
         }
-
-        await client.sendMessage({
-          adId: args.adId,
+        const listingUrl = await resolveListingUrl(client, args.adId);
+        const pool = getChromePool();
+        pool.rememberPassword(username, password);
+        const result = await sendEnquiryViaChrome(pool, {
+          email: username,
+          password,
+          listingUrl,
+          message: args.message,
           firstName,
           lastName,
-          email,
           phone,
-          message: args.message,
-          moveInDate: args.moveInDate,
-          saveReply: args.saveReply,
-          mortgageApproved: args.mortgageApproved,
-          pets: args.pets,
-          ...(args.adultTenants !== undefined
-            ? { tenants: { adultTenants: args.adultTenants } }
-            : {}),
-          ...(form?.propertyToSellDetails
-            ? { propertyToSellDetails: form.propertyToSellDetails }
-            : {}),
+          contactEmail: email,
         });
-        return ok({ ok: true, adId: args.adId, agentId: args.agentId.trim() });
+        if (!result.ok) {
+          return {
+            content: [
+              {
+                type: "text",
+                text: `Chrome enquiry failed: ${result.detail ?? "unknown"} (HTTP ${result.replyStatus ?? "n/a"})`,
+              },
+            ],
+            isError: true,
+          };
+        }
+        return ok({
+          ok: true,
+          adId: args.adId,
+          agentId: args.agentId.trim(),
+          via: "chrome",
+          replyStatus: result.replyStatus,
+        });
       } catch (err) {
         if (err instanceof ApiError && (err.status === 400 || err.status === 403)) {
           return {
@@ -980,19 +953,15 @@ export function createServer(
         }
         const msg = err instanceof Error ? err.message : String(err);
         if (
-          /recaptcha|captcha|DAFT_RECAPTCHA|SOCKS5|TCP timeout|busy|chrome enquiry|Cloudflare|Xvfb/i.test(
-            msg
-          )
+          /captcha|chrome enquiry|Cloudflare|Xvfb|CDP/i.test(msg)
         ) {
           return {
             content: [
               {
                 type: "text",
                 text:
-                  `Enquiry/captcha failed: ${msg}. ` +
-                  (useChromeEnquiry()
-                    ? `Chrome mode: one enquiry at a time (shared host Chrome). Wait for each send_enquiry to finish before the next; OpenCode timeout should be ≥180s. If CDP drops, ensure host Chrome on DAFT_CHROME_CDP_URL is up.`
-                    : `TCP mode: DAFT_RECAPTCHA_TCP_HOST + phone LSPosed + DAFT_RECAPTCHA_SOCKS.`),
+                  `Enquiry failed: ${msg}. ` +
+                  `Chrome mode: one enquiry at a time (shared host Chrome). Wait for each send_enquiry to finish; OpenCode timeout ≥180s. If CDP drops, ensure host Chrome on DAFT_CHROME_CDP_URL is up.`,
               },
             ],
             isError: true,
