@@ -47,6 +47,8 @@ export class ChromePool {
   private idleTimer: ReturnType<typeof setTimeout> | null = null;
   private starting: Promise<CdpSession> | null = null;
   private activeLeases = 0;
+  /** One shared host Chrome → serialize all tabs (not only per-email). */
+  private readonly cdpMutex = new Mutex();
 
   constructor(opts: ChromePoolOptions = {}) {
     const base = resolveChromePoolEnv(opts.env ?? process.env);
@@ -117,6 +119,12 @@ export class ChromePool {
       this.touchIdle();
       return;
     }
+    // Attach mode: keep the CDP websocket (and host Chrome) alive.
+    // Disconnecting after idleMs causes "CDP session closed" / client
+    // "Socket connection closed" on the next burst of send_enquiry calls.
+    if (this.conf.cdpUrl) {
+      return;
+    }
     await this.proc.stop();
     this.afterChromeStop();
   }
@@ -126,6 +134,8 @@ export class ChromePool {
       this.touchIdle();
       return this.proc.browser;
     }
+    // Stale contexts after CDP drop / host Chrome restart
+    this.afterChromeStop();
     if (!this.starting) {
       this.starting = this.proc.start().finally(() => {
         this.starting = null;
@@ -226,10 +236,13 @@ export class ChromePool {
       disposed = true;
       try {
         const latest = await page.getCookies();
-        const daftish = latest.filter((c) =>
-          /daft\.ie|keycloak/i.test(c.domain)
+        // Persist daft + Cloudflare clearance for warmer next jobs
+        const keep = latest.filter(
+          (c) =>
+            /daft\.ie|keycloak|cloudflare/i.test(c.domain) ||
+            /^cf_clearance$|^__cf_bm$/i.test(c.name)
         );
-        if (daftish.length) this.saveCookies(u.email, latest);
+        if (keep.length) this.saveCookies(u.email, keep);
       } catch {
         /* ignore */
       }
@@ -248,7 +261,8 @@ export class ChromePool {
 
   /**
    * Run work on a dedicated tab for this email (serialized per email).
-   * Multiple emails run concurrently.
+   * In DAFT_CHROME_CDP_URL attach mode, also globally serialized — one host
+   * Chrome cannot safely run parallel CDP jobs (OpenCode bursts).
    */
   async withPage<T>(
     email: string,
@@ -257,14 +271,18 @@ export class ChromePool {
   ): Promise<T> {
     const u = this.user(email);
     if (password) u.password = password;
-    return u.mutex.run(async () => {
+    const run = async () => {
       const { page, dispose } = await this.openPage(u.email, u.password);
       try {
         return await fn(page, u);
       } finally {
         await dispose();
       }
-    });
+    };
+    if (this.conf.cdpUrl) {
+      return this.cdpMutex.run(() => u.mutex.run(run));
+    }
+    return u.mutex.run(run);
   }
 
   async shutdown() {

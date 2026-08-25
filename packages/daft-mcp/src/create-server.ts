@@ -991,7 +991,7 @@ export function createServer(
                 text:
                   `Enquiry/captcha failed: ${msg}. ` +
                   (useChromeEnquiry()
-                    ? `Chrome mode (DAFT_ENQUIRY_MODE=chrome): check CHROME_PATH, Xvfb (DAFT_CHROME_XVFB=1), and auth_login password in-memory.`
+                    ? `Chrome mode: one enquiry at a time (shared host Chrome). Wait for each send_enquiry to finish before the next; OpenCode timeout should be ≥180s. If CDP drops, ensure host Chrome on DAFT_CHROME_CDP_URL is up.`
                     : `TCP mode: DAFT_RECAPTCHA_TCP_HOST + phone LSPosed + DAFT_RECAPTCHA_SOCKS.`),
               },
             ],
