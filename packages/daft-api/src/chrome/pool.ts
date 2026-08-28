@@ -156,11 +156,49 @@ export class ChromePool {
     return b;
   }
 
-  /** Sync + actively refresh Cloudflare clearance when missing or near expiry. */
+  /** Ensure CF is ready; re-warm when global file missing or mid-challenge cookies detected. */
   private async ensureCfReady(browser: CdpSession): Promise<void> {
     await this.syncGlobalCfCookies(browser);
-    if (hasFreshGlobalCf(this.conf.cookieDir)) return;
+    const stale =
+      !hasFreshGlobalCf(this.conf.cookieDir) ||
+      (this.conf.cdpUrl && !(await this.hostProfileCfLooksValid(browser)));
+    if (!stale) return;
     await warmCfClearance(browser, this.conf, { force: true, maxSec: 120 });
+  }
+
+  /** True when host default profile has cf_clearance and no cf_chl_* challenge cookies. */
+  private async hostProfileCfLooksValid(browser: CdpSession): Promise<boolean> {
+    let targetId: string | undefined;
+    try {
+      ({ targetId } = await browser.send<{ targetId: string }>(
+        "Target.createTarget",
+        { url: "about:blank" }
+      ));
+      const attached = await browser.send<{ sessionId: string }>(
+        "Target.attachToTarget",
+        { targetId, flatten: true }
+      );
+      await browser.send("Network.enable", {}, attached.sessionId);
+      const r = await browser.send<{ cookies: StoredCookie[] }>(
+        "Network.getAllCookies",
+        {},
+        attached.sessionId
+      );
+      const cookies = r.cookies ?? [];
+      const hasClearance = cookies.some((c) => /^cf_clearance$/i.test(c.name));
+      const hasChallenge = cookies.some((c) => /^cf_chl_|^__cf_chl/i.test(c.name));
+      return hasClearance && !hasChallenge;
+    } catch {
+      return false;
+    } finally {
+      if (targetId) {
+        try {
+          await browser.send("Target.closeTarget", { targetId });
+        } catch {
+          /* ignore */
+        }
+      }
+    }
   }
 
   /**
@@ -188,7 +226,7 @@ export class ChromePool {
         attached.sessionId
       );
       const cf = extractCfCookies(r.cookies ?? []);
-      if (cf.length) {
+      if (cf.some((c) => /^cf_clearance$/i.test(c.name))) {
         saveGlobalCfCookies(this.conf.cookieDir, cf);
         console.error(`[chrome-pool] synced ${cf.length} global CF cookie(s)`);
       }
@@ -234,8 +272,14 @@ export class ChromePool {
     return u;
   }
 
+  private usesHostProfile(): boolean {
+    return Boolean(this.conf.cdpUrl);
+  }
+
   /**
    * Open an isolated tab for this email (own BrowserContext).
+   * When attached to host CDP (`DAFT_CHROME_CDP_URL`), uses the host default
+   * profile so Cloudflare clearance from the real display applies natively.
    * Caller must close via returned dispose / withPage.
    */
   async openPage(
@@ -246,27 +290,35 @@ export class ChromePool {
     if (password) u.password = password;
 
     const browser = await this.browser();
+    const hostProfile = this.usesHostProfile();
     if (!hasFreshGlobalCf(this.conf.cookieDir)) {
       await warmCfClearance(browser, this.conf, { force: true, maxSec: 90 });
     }
 
-    if (!u.browserContextId) {
-      const created = await browser.send<{ browserContextId: string }>(
-        "Target.createBrowserContext"
-      );
-      u.browserContextId = created.browserContextId;
+    if (!hostProfile) {
+      if (!u.browserContextId) {
+        const created = await browser.send<{ browserContextId: string }>(
+          "Target.createBrowserContext"
+        );
+        u.browserContextId = created.browserContextId;
+      }
+    }
+
+    const targetOpts: { url: string; browserContextId?: string } = {
+      url: "about:blank",
+    };
+    if (!hostProfile && u.browserContextId) {
+      targetOpts.browserContextId = u.browserContextId;
     }
 
     let targetId: string;
     try {
       ({ targetId } = await browser.send<{ targetId: string }>(
         "Target.createTarget",
-        {
-          url: "about:blank",
-          browserContextId: u.browserContextId,
-        }
+        targetOpts
       ));
-    } catch {
+    } catch (err) {
+      if (hostProfile) throw err;
       // Stale context after unexpected Chrome restart
       const created = await browser.send<{ browserContextId: string }>(
         "Target.createBrowserContext"
@@ -289,11 +341,18 @@ export class ChromePool {
     const page = new PageHandle(browser, attached.sessionId, targetId);
     await page.enable();
 
-    const cookies = mergeCfCookies(
-      this.loadCookies(u.email),
-      loadGlobalCfCookies(this.conf.cookieDir)
-    );
-    if (cookies.length) await page.setCookies(cookies);
+    if (hostProfile) {
+      // Host profile: never inject stale cf_clearance (triggers cf_chl_* loops).
+      await page.clearCfCookies();
+      const userCookies = this.loadCookies(u.email);
+      if (userCookies.length) await page.setCookies(userCookies);
+    } else {
+      const cookies = mergeCfCookies(
+        this.loadCookies(u.email),
+        loadGlobalCfCookies(this.conf.cookieDir)
+      );
+      if (cookies.length) await page.setCookies(cookies);
+    }
 
     this.activeLeases++;
     u.leases++;

@@ -72,7 +72,7 @@ export function mergeCfCookies(
 }
 
 export function extractCfCookies(cookies: StoredCookie[]): StoredCookie[] {
-  return cookies.filter(isCfCookie);
+  return cookies.filter((c) => isCfCookie(c) && !isCfChallengeCookie(c));
 }
 
 /** Expiry unix seconds embedded in cf_clearance value (Cloudflare format). */

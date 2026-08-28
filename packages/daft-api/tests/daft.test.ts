@@ -636,6 +636,39 @@ describe("DaftApi", () => {
       expect(form.get("client_id")).toBe("daft-android-v2");
       expect(form.get("username")).toBe("user");
       expect(form.get("password")).toBe("pass");
+      expect(form.get("scope")).toBe("openid offline_access dapi");
+      expect(loginClient.getToken()).toBe(token.access_token);
+    });
+
+    it("login: falls back when Keycloak 500s on dapi scope", async () => {
+      const calls: FetchCall[] = [];
+      const flakyFetch = mock((url: string, options: RequestInit) => {
+        calls.push([url, options]);
+        const form = new URLSearchParams(options.body as string);
+        if (form.get("scope")?.includes("dapi")) {
+          return Promise.resolve(
+            jsonResponse(
+              {
+                error: "unknown_error",
+                error_description: "For more on this error consult the server log.",
+              },
+              500
+            )
+          );
+        }
+        return Promise.resolve(jsonResponse(mockTokenResponse));
+      });
+      const loginClient = new DaftApi({
+        fetchFn: flakyFetch as unknown as typeof fetch,
+      });
+      const token = await loginClient.login("user", "pass");
+      expect(calls.length).toBe(2);
+      expect(
+        new URLSearchParams(calls[0][1].body as string).get("scope")
+      ).toBe("openid offline_access dapi");
+      expect(
+        new URLSearchParams(calls[1][1].body as string).get("scope")
+      ).toBe("openid offline_access");
       expect(loginClient.getToken()).toBe(token.access_token);
     });
 

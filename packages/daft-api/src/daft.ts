@@ -756,17 +756,34 @@ export class DaftApi {
    * obtain a token through the app/website and pass it via `authToken`.
    */
   async login(username: string, password: string): Promise<TokenResponse> {
-    const token = await this.requestToken({
-      grant_type: "password",
-      client_id: this.clientId,
-      username,
-      password,
-      scope: "openid offline_access dapi",
-    });
-    this.token = token.access_token;
-    if (token.refresh_token) this.refreshTokenValue = token.refresh_token;
-    this.emitTokensChange("current");
-    return token;
+    const scopes = ["openid offline_access dapi", "openid offline_access"];
+    let lastErr: ApiError | undefined;
+    for (const scope of scopes) {
+      try {
+        const token = await this.requestToken({
+          grant_type: "password",
+          client_id: this.clientId,
+          username,
+          password,
+          scope,
+        });
+        this.token = token.access_token;
+        if (token.refresh_token) this.refreshTokenValue = token.refresh_token;
+        this.emitTokensChange("current");
+        return token;
+      } catch (err) {
+        if (
+          err instanceof ApiError &&
+          err.status === 500 &&
+          scope.includes("dapi")
+        ) {
+          lastErr = err;
+          continue;
+        }
+        throw err;
+      }
+    }
+    throw lastErr ?? new Error("Token request failed");
   }
 
   /**

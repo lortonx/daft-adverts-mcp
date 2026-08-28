@@ -9,7 +9,9 @@ cf_warm() {
   cid=$(docker ps -q --filter 'label=coolify.managed=true' --filter 'name=g5cawh457ytasyrdywewbd9w' | head -1)
   [ -z "$cid" ] && cid=$(docker ps -q --filter 'publish=3100' | head -1)
   [ -z "$cid" ] && return 0
-  docker exec -e CDP=http://10.0.1.1:9222 -e DAFT_CHROME_DATA_DIR=/data/daft-chrome \
+  # Host-side Turnstile click (needs DISPLAY=:0)
+  /home/admin/bin/cf-warm-host.sh >>/tmp/daft-cf-warm.log 2>&1 || true
+  docker exec -e DAFT_CHROME_CDP_URL=http://10.0.1.1:9222 -e DAFT_CHROME_DATA_DIR=/data/daft-chrome \
     -w /app/packages/daft-api "$cid" \
     bun scripts/cf-warm-cli.ts >>/tmp/daft-cf-warm.log 2>&1 || true
 }

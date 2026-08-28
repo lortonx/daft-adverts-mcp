@@ -17,7 +17,7 @@ const CHALLENGE_EXPR = `(() => {
   const blob = title + ' ' + body;
   const cfUrl = /__cf_chl|cf_chl_rt|challenges\\.cloudflare/i.test(href);
   const cfText = /just a moment|checking the security|security check/i.test(blob);
-  const normal = /property website|sign in|accept all|find your way/i.test(blob);
+  const normal = /property website|sign in|accept all|find your way|buy.*sell|search homes|place ad|residential|commercial|daft mortgage/i.test(blob);
   return {
     challenge: (cfText || cfUrl) && !normal,
     cfUrl,
@@ -100,6 +100,15 @@ export class PageHandle {
 
   /** Click Cloudflare Turnstile checkbox area (iframe is cross-origin). */
   private async clickTurnstile(): Promise<boolean> {
+    try {
+      await this.browser.send("Target.activateTarget", {
+        targetId: this.targetId,
+      });
+    } catch {
+      /* ignore */
+    }
+    await this.send("Page.bringToFront").catch(() => undefined);
+
     const pt = await this.evaluate<{
       x: number;
       y: number;
@@ -127,6 +136,24 @@ export class PageHandle {
       return true;
     }
     await this.clickAt(640, 450);
+    for (const key of ["Tab", "Tab", "Space"] as const) {
+      await this.send("Input.dispatchKeyEvent", {
+        type: key === "Space" ? "keyDown" : "rawKeyDown",
+        key,
+        code: key === "Space" ? "Space" : "Tab",
+        windowsVirtualKeyCode: key === "Space" ? 32 : 9,
+        nativeVirtualKeyCode: key === "Space" ? 32 : 9,
+      }).catch(() => undefined);
+      if (key === "Space") {
+        await this.send("Input.dispatchKeyEvent", {
+          type: "keyUp",
+          key: "Space",
+          code: "Space",
+          windowsVirtualKeyCode: 32,
+          nativeVirtualKeyCode: 32,
+        }).catch(() => undefined);
+      }
+    }
     return false;
   }
 
@@ -147,8 +174,23 @@ export class PageHandle {
         normal: boolean;
       }>(CHALLENGE_EXPR);
       const hasCf = await this.hasCfClearance();
+      const midChallenge = await this.hasCfChallengeCookie();
 
       if (st.normal || !st.challenge) return;
+
+      // Stale injected clearance + mid-challenge cookie = infinite loop; wipe and retry.
+      if (midChallenge && hasCf && i >= 3 && i % 5 === 3) {
+        await this.clearCfCookies();
+        await this.send("Page.reload", { ignoreCache: true });
+        await sleep(3500);
+        continue;
+      }
+
+      // Host profile often already has clearance — give the page a beat to settle.
+      if (hasCf && !midChallenge && i < 4) {
+        await sleep(1500);
+        continue;
+      }
 
       if (hasCf && st.cfUrl && !navigatedClean) {
         navigatedClean = true;
@@ -175,7 +217,7 @@ export class PageHandle {
       `({
         title: document.title,
         href: location.href,
-        normal: /property website|sign in|accept all|find your way/i.test(
+        normal: /property website|sign in|accept all|find your way|buy.*sell|search homes|place ad|residential|commercial|daft mortgage/i.test(
           document.title + ' ' + (document.body?.innerText || '')
         ),
       })`
@@ -185,6 +227,33 @@ export class PageHandle {
       `Cloudflare/security challenge timeout (${last.title} @ ${last.href}). ` +
         `Ensure host Chrome on DAFT_CHROME_CDP_URL is running with DISPLAY=:0.`
     );
+  }
+
+  async clearCfCookies(): Promise<void> {
+    const r = await this.send<{ cookies: StoredCookie[] }>(
+      "Network.getAllCookies"
+    );
+    for (const c of r.cookies ?? []) {
+      if (
+        !/daft\.ie/i.test(c.domain) &&
+        !/\.daft\.ie$/i.test(c.domain)
+      ) {
+        continue;
+      }
+      if (/^cf_|^__cf/i.test(c.name)) {
+        await this.send("Network.deleteCookies", {
+          name: c.name,
+          domain: c.domain,
+        }).catch(() => undefined);
+      }
+    }
+  }
+
+  private async hasCfChallengeCookie(): Promise<boolean> {
+    const r = await this.send<{ cookies: StoredCookie[] }>(
+      "Network.getAllCookies"
+    );
+    return (r.cookies ?? []).some((c) => /^cf_chl_|^__cf_chl/i.test(c.name));
   }
 
   async getCookies(): Promise<StoredCookie[]> {
