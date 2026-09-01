@@ -509,7 +509,11 @@ function maskIdentity(value: string): string {
   return `${value.slice(0, 2)}***${value.slice(-1)}`;
 }
 
-function authSnapshot(daft: DaftApi, username?: string) {
+function authSnapshot(
+  daft: DaftApi,
+  username?: string,
+  chromeOnly?: boolean
+) {
   const access = daft.getToken();
   const refresh = daft.getRefreshToken();
   const claims = access ? decodeJwtClaims(access) : undefined;
@@ -519,7 +523,8 @@ function authSnapshot(daft: DaftApi, username?: string) {
       ? claims.preferred_username
       : null;
   return {
-    loggedIn: Boolean(access || refresh),
+    loggedIn: Boolean(access || refresh || chromeOnly),
+    chromeOnly: Boolean(chromeOnly),
     hasAccessToken: Boolean(access),
     hasRefreshToken: Boolean(refresh),
     username: username ? maskIdentity(username) : null,
@@ -617,7 +622,7 @@ export function createServer(
         return ok({
           ok: true,
           agentId: agentId.trim(),
-          ...authSnapshot(client, username),
+          ...authSnapshot(client, username, sessions.isChromeOnly(agentId)),
         });
       } catch (err) {
         return toolError(err);
@@ -639,7 +644,11 @@ export function createServer(
         const client = sessions.clientFor(agentId);
         return ok({
           agentId: agentId.trim(),
-          ...authSnapshot(client, sessions.getUsername(agentId)),
+          ...authSnapshot(
+            client,
+            sessions.getUsername(agentId),
+            sessions.isChromeOnly(agentId)
+          ),
         });
       } catch (err) {
         return toolError(err);
@@ -860,20 +869,27 @@ export function createServer(
     },
     async (args) => {
       try {
-        const client = await sessions.requireSession(
-          args.agentId,
-          args.username && args.password
-            ? { username: args.username, password: args.password }
-            : undefined
-        );
+        const { client, username, password, chromeOnly } =
+          await sessions.requireChromeSession(
+            args.agentId,
+            args.username && args.password
+              ? { username: args.username, password: args.password }
+              : undefined
+          );
         const needForm =
-          args.useSavedForm === true ||
-          !args.firstName ||
-          !args.lastName ||
-          !args.email;
-        const form = needForm
-          ? await client.getSavedReply(args.adId)
-          : null;
+          !chromeOnly &&
+          (args.useSavedForm === true ||
+            !args.firstName ||
+            !args.lastName ||
+            !args.email);
+        let form: Awaited<ReturnType<DaftApi["getSavedReply"]>> | null = null;
+        if (needForm && (client.getToken() || client.getRefreshToken())) {
+          try {
+            form = await client.getSavedReply(args.adId);
+          } catch {
+            form = null;
+          }
+        }
         const firstName = (args.firstName ?? form?.firstName ?? "").trim();
         const lastName = (args.lastName ?? form?.lastName ?? "").trim();
         const email = args.email ?? form?.email ?? "";
@@ -883,31 +899,15 @@ export function createServer(
             content: [
               {
                 type: "text",
-                text: "Missing firstName/lastName/email. Pass them or ensure get_enquiry_form has saved defaults.",
+                text: chromeOnly
+                  ? "Missing firstName/lastName/email. Pass them explicitly (API saved form unavailable in chrome-only mode)."
+                  : "Missing firstName/lastName/email. Pass them or ensure get_enquiry_form has saved defaults.",
               },
             ],
             isError: true,
           };
         }
 
-        const username =
-          args.username?.trim() ||
-          sessions.getUsername(args.agentId) ||
-          email;
-        const password =
-          args.password || sessions.getPassword(args.agentId);
-        if (!password) {
-          return {
-            content: [
-              {
-                type: "text",
-                text:
-                  "Chrome enquiry needs password in this process. Call auth_login(agentId, username, password) again (password is memory-only after restart).",
-              },
-            ],
-            isError: true,
-          };
-        }
         const listingUrl = await resolveListingUrl(client, args.adId);
         const pool = getChromePool();
         pool.rememberPassword(username, password);
