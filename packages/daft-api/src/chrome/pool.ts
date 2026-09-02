@@ -159,11 +159,26 @@ export class ChromePool {
   /** Ensure CF is ready; re-warm when global file missing or mid-challenge cookies detected. */
   private async ensureCfReady(browser: CdpSession): Promise<void> {
     await this.syncGlobalCfCookies(browser);
-    const stale =
-      !hasFreshGlobalCf(this.conf.cookieDir) ||
-      (this.conf.cdpUrl && !(await this.hostProfileCfLooksValid(browser)));
-    if (!stale) return;
-    await warmCfClearance(browser, this.conf, { force: true, maxSec: 120 });
+    if (
+      hasFreshGlobalCf(this.conf.cookieDir) &&
+      (!this.conf.cdpUrl || (await this.hostProfileCfLooksValid(browser)))
+    ) {
+      return;
+    }
+    const ok = await warmCfClearance(browser, this.conf, {
+      force: true,
+      maxSec: 60,
+    });
+    if (
+      ok ||
+      hasFreshGlobalCf(this.conf.cookieDir) ||
+      (this.conf.cdpUrl && (await this.hostProfileCfLooksValid(browser)))
+    ) {
+      return;
+    }
+    throw new Error(
+      "Cloudflare clearance not ready. Host Chrome on DAFT_CHROME_CDP_URL needs cf_clearance (check DISPLAY=:0 and daft-chrome-cdp-loop)."
+    );
   }
 
   /** True when host default profile has cf_clearance and no cf_chl_* challenge cookies. */
@@ -292,7 +307,18 @@ export class ChromePool {
     const browser = await this.browser();
     const hostProfile = this.usesHostProfile();
     if (!hasFreshGlobalCf(this.conf.cookieDir)) {
-      await warmCfClearance(browser, this.conf, { force: true, maxSec: 90 });
+      const ok = await warmCfClearance(browser, this.conf, {
+        force: true,
+        maxSec: 45,
+      });
+      if (
+        !ok &&
+        !(hostProfile && (await this.hostProfileCfLooksValid(browser)))
+      ) {
+        throw new Error(
+          "Cloudflare clearance not ready before enquiry tab opened. Warm host Chrome or run cf-warm-host."
+        );
+      }
     }
 
     if (!hostProfile) {

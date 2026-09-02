@@ -13,6 +13,17 @@ import * as z from "zod/v4";
 import { createDaftClient } from "./client";
 import { AgentSessionManager } from "./agent-sessions";
 
+const CHROME_ENQUIRY_MS = Number(process.env.DAFT_CHROME_ENQUIRY_MS ?? 100_000);
+
+function chromeEnquiryErrorText(msg: string): string {
+  return (
+    `Enquiry failed: ${msg}. ` +
+    `Chrome mode: one enquiry at a time (shared host Chrome). ` +
+    `If this was a client timeout, the server may still be running the job — wait and retry once. ` +
+    `OpenCode/Cursor MCP timeout ≥180s. If CDP drops, ensure host Chrome on DAFT_CHROME_CDP_URL is up.`
+  );
+}
+
 async function resolveListingUrl(
   client: DaftApi,
   adId: number
@@ -911,16 +922,33 @@ export function createServer(
         const listingUrl = await resolveListingUrl(client, args.adId);
         const pool = getChromePool();
         pool.rememberPassword(username, password);
-        const result = await sendEnquiryViaChrome(pool, {
-          email: username,
-          password,
-          listingUrl,
-          message: args.message,
-          firstName,
-          lastName,
-          phone,
-          contactEmail: email,
-        });
+        const budgetMs =
+          Number.isFinite(CHROME_ENQUIRY_MS) && CHROME_ENQUIRY_MS > 0
+            ? CHROME_ENQUIRY_MS
+            : 100_000;
+        const result = await Promise.race([
+          sendEnquiryViaChrome(pool, {
+            email: username,
+            password,
+            listingUrl,
+            message: args.message,
+            firstName,
+            lastName,
+            phone,
+            contactEmail: email,
+          }),
+          new Promise<never>((_, reject) => {
+            setTimeout(
+              () =>
+                reject(
+                  new Error(
+                    `chrome enquiry exceeded ${budgetMs}ms server budget (CDP/Cloudflare/login stuck)`
+                  )
+                ),
+              budgetMs
+            );
+          }),
+        ]);
         if (!result.ok) {
           return {
             content: [
@@ -953,15 +981,15 @@ export function createServer(
         }
         const msg = err instanceof Error ? err.message : String(err);
         if (
-          /captcha|chrome enquiry|Cloudflare|Xvfb|CDP/i.test(msg)
+          /captcha|chrome enquiry|Cloudflare|Xvfb|CDP|clearance not ready|exceeded .* server budget/i.test(
+            msg
+          )
         ) {
           return {
             content: [
               {
                 type: "text",
-                text:
-                  `Enquiry failed: ${msg}. ` +
-                  `Chrome mode: one enquiry at a time (shared host Chrome). Wait for each send_enquiry to finish; OpenCode timeout ≥180s. If CDP drops, ensure host Chrome on DAFT_CHROME_CDP_URL is up.`,
+                text: chromeEnquiryErrorText(msg),
               },
             ],
             isError: true,

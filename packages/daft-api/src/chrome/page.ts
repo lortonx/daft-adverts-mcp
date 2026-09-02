@@ -64,7 +64,15 @@ export class PageHandle {
       awaitPromise: true,
     });
     if (r.exceptionDetails) {
-      throw new Error(JSON.stringify(r.exceptionDetails));
+      const d = r.exceptionDetails as {
+        text?: string;
+        exception?: { description?: string };
+      };
+      throw new Error(
+        d.exception?.description ??
+          d.text ??
+          JSON.stringify(r.exceptionDetails)
+      );
     }
     return r.result?.value as T;
   }
@@ -161,7 +169,7 @@ export class PageHandle {
    * Wait until Cloudflare challenge clears. Seeds cf_clearance from the pool
    * should make this fast; otherwise clicks Turnstile and reloads once.
    */
-  async waitCfGone(maxSec = 90) {
+  async waitCfGone(maxSec = 45) {
     let reloaded = false;
     let navigatedClean = false;
 

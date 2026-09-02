@@ -66,16 +66,34 @@ export class CdpSession {
   send<T = unknown>(
     method: string,
     params: Record<string, unknown> = {},
-    sessionId?: string
+    sessionId?: string,
+    timeoutMs = Number(process.env.DAFT_CDP_TIMEOUT_MS ?? 45_000)
   ): Promise<T> {
     if (!this.alive) return Promise.reject(new Error("CDP not connected"));
     const id = ++this.id;
     const payload: Record<string, unknown> = { id, method, params };
     if (sessionId) payload.sessionId = sessionId;
+    const ms =
+      Number.isFinite(timeoutMs) && timeoutMs > 0 ? timeoutMs : 45_000;
     return new Promise<T>((resolve, reject) => {
+      const timer = setTimeout(() => {
+        if (!this.pending.has(id)) return;
+        this.pending.delete(id);
+        reject(
+          new Error(
+            `CDP timeout after ${ms}ms: ${method} (host Chrome may be frozen or disconnected)`
+          )
+        );
+      }, ms);
       this.pending.set(id, {
-        resolve: (v) => resolve(v as T),
-        reject,
+        resolve: (v) => {
+          clearTimeout(timer);
+          resolve(v as T);
+        },
+        reject: (e) => {
+          clearTimeout(timer);
+          reject(e);
+        },
       });
       this.ws.send(JSON.stringify(payload));
     });

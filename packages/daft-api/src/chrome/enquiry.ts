@@ -27,8 +27,10 @@ export type ChromeEnquiryResult = {
 
 async function apiSessionUser(page: PageHandle): Promise<unknown> {
   return page.evaluate(
-    `fetch('https://www.daft.ie/api/auth/session', {credentials:'include'})
-      .then(r => r.json()).catch(e => ({error: String(e)}))`
+    `fetch('https://www.daft.ie/api/auth/session', {
+      credentials: 'include',
+      signal: AbortSignal.timeout(8000),
+    }).then(r => r.json()).catch(e => ({error: String(e)}))`
   );
 }
 
@@ -102,11 +104,11 @@ export async function ensureWebLogin(
     return true;
   })()`);
 
-  for (let i = 0; i < 45; i++) {
-    await pause(1500);
+  for (let i = 0; i < 25; i++) {
+    await pause(1000);
     const host = await page.evaluate<string>(`location.hostname`);
     if (host === "www.daft.ie") {
-      await pause(1500);
+      await pause(800);
       if (await isSignedIn(page)) return;
     }
     const err = await page.evaluate<string>(
@@ -116,7 +118,10 @@ export async function ensureWebLogin(
       throw new Error(`chrome enquiry login failed: ${err}`);
     }
   }
-  throw new Error("chrome enquiry: login timeout");
+  const where = await page.evaluate<string>(
+    `location.hostname + location.pathname + ' title=' + document.title`
+  );
+  throw new Error(`chrome enquiry: login timeout (${where})`);
 }
 
 async function openMessageForm(page: PageHandle, listingUrl: string) {
@@ -163,7 +168,7 @@ async function openMessageForm(page: PageHandle, listingUrl: string) {
       `/just a moment|checking the security/i.test(document.title + ' ' + (document.body?.innerText||''))`
     );
     if (blocked) {
-      await page.waitCfGone(60);
+      await page.waitCfGone(30);
     }
   }
   throw new Error("chrome enquiry: message form did not open (CF or UI timeout)");
