@@ -85,7 +85,11 @@ export async function warmCfClearance(
     }
 
     const page = await attachPage(browser, targetId);
-    await page.clearCfCookies();
+    // Attach mode: keep host clearance. Wiping it forces a fresh challenge
+    // that CDP usually cannot pass. Spawned Chrome still needs a clean jar.
+    if (!conf.cdpUrl) {
+      await page.clearCfCookies();
+    }
     await page.navigate("https://www.daft.ie/", 3000);
     await page.waitCfGone(opts.maxSec ?? 120);
     const raw = await page.getCookies();

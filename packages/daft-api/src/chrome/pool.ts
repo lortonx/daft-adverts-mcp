@@ -368,8 +368,9 @@ export class ChromePool {
     await page.enable();
 
     if (hostProfile) {
-      // Host profile: never inject stale cf_clearance (triggers cf_chl_* loops).
-      await page.clearCfCookies();
+      // Host profile already has live cf_clearance from DISPLAY=:0 Chrome.
+      // Do NOT clearCfCookies here — that wipes clearance and forces a new
+      // Turnstile that CDP cannot solve (enquiry then dies as "Just a moment").
       const userCookies = this.loadCookies(u.email);
       if (userCookies.length) await page.setCookies(userCookies);
     } else {

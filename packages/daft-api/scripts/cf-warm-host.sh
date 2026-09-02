@@ -10,9 +10,14 @@ if ! command -v xdotool >/dev/null 2>&1; then
   exit 1
 fi
 
+# Titles are often "Search Ireland's No. 1 Property Website | Daft.ie" (or HTML-entity).
+# Pass when a daft page exists and is NOT a CF interstitial.
 cf_passed() {
-  curl -sf -m 3 http://127.0.0.1:9222/json/list 2>/dev/null \
-    | grep -E '"title": "(Daft|Property|Buy|Rent|Sign)' >/dev/null
+  local list
+  list=$(curl -sf -m 3 http://127.0.0.1:9222/json/list 2>/dev/null) || return 1
+  echo "$list" | grep -qiE 'daft\.ie' || return 1
+  echo "$list" | grep -qiE 'Just a moment|Security Check|checking the security' && return 1
+  return 0
 }
 
 for attempt in $(seq 1 20); do
