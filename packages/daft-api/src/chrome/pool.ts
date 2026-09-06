@@ -34,7 +34,7 @@ import {
   saveGlobalCfCookies,
   stripCfCookies,
 } from "./cf-cookies";
-import { warmCfClearance } from "./cf-warm";
+import { pickHostPageTarget, warmCfClearance } from "./cf-warm";
 
 export type ChromePoolOptions = Partial<ChromePoolEnv> & {
   env?: NodeJS.ProcessEnv;
@@ -183,12 +183,18 @@ export class ChromePool {
 
   /** True when host default profile has cf_clearance and no cf_chl_* challenge cookies. */
   private async hostProfileCfLooksValid(browser: CdpSession): Promise<boolean> {
+    if (!this.conf.cdpUrl) return false;
     let targetId: string | undefined;
+    let created = false;
     try {
-      ({ targetId } = await browser.send<{ targetId: string }>(
-        "Target.createTarget",
-        { url: "about:blank" }
-      ));
+      targetId = await pickHostPageTarget(this.conf.cdpUrl);
+      if (!targetId) {
+        ({ targetId } = await browser.send<{ targetId: string }>(
+          "Target.createTarget",
+          { url: "about:blank" }
+        ));
+        created = true;
+      }
       const attached = await browser.send<{ sessionId: string }>(
         "Target.attachToTarget",
         { targetId, flatten: true }
@@ -201,12 +207,14 @@ export class ChromePool {
       );
       const cookies = r.cookies ?? [];
       const hasClearance = cookies.some((c) => /^cf_clearance$/i.test(c.name));
-      const hasChallenge = cookies.some((c) => /^cf_chl_|^__cf_chl/i.test(c.name));
+      const hasChallenge = cookies.some((c) =>
+        /^cf_chl_|^__cf_chl/i.test(c.name)
+      );
       return hasClearance && !hasChallenge;
     } catch {
       return false;
     } finally {
-      if (targetId) {
+      if (created && targetId) {
         try {
           await browser.send("Target.closeTarget", { targetId });
         } catch {
@@ -225,11 +233,18 @@ export class ChromePool {
       return;
     }
     let targetId: string | undefined;
+    let created = false;
     try {
-      ({ targetId } = await browser.send<{ targetId: string }>(
-        "Target.createTarget",
-        { url: "about:blank" }
-      ));
+      if (this.conf.cdpUrl) {
+        targetId = await pickHostPageTarget(this.conf.cdpUrl);
+      }
+      if (!targetId) {
+        ({ targetId } = await browser.send<{ targetId: string }>(
+          "Target.createTarget",
+          { url: "about:blank" }
+        ));
+        created = true;
+      }
       const attached = await browser.send<{ sessionId: string }>(
         "Target.attachToTarget",
         { targetId, flatten: true }
@@ -251,7 +266,7 @@ export class ChromePool {
         `[chrome-pool] global CF sync failed: ${err instanceof Error ? err.message : String(err)}`
       );
     } finally {
-      if (targetId) {
+      if (created && targetId) {
         try {
           await browser.send("Target.closeTarget", { targetId });
         } catch {
@@ -292,10 +307,11 @@ export class ChromePool {
   }
 
   /**
-   * Open an isolated tab for this email (own BrowserContext).
-   * When attached to host CDP (`DAFT_CHROME_CDP_URL`), uses the host default
-   * profile so Cloudflare clearance from the real display applies natively.
-   * Caller must close via returned dispose / withPage.
+   * Open a page for enquiry work.
+   * Spawn mode: isolated BrowserContext tab (createTarget), closed on dispose.
+   * Attach mode (`DAFT_CHROME_CDP_URL`): MUST reuse an existing host Chrome page.
+   * Proven: Target.createTarget + Page.navigate to daft.ie sticks on Cloudflare
+   * "Just a moment..." that waitCfGone cannot clear; reusing the host page does not.
    */
   async openPage(
     email: string,
@@ -321,42 +337,55 @@ export class ChromePool {
       }
     }
 
-    if (!hostProfile) {
+    let targetId: string;
+    let reuseHostPage = false;
+
+    if (hostProfile) {
+      const cdpUrl = this.conf.cdpUrl;
+      if (!cdpUrl) {
+        throw new Error("host profile mode requires DAFT_CHROME_CDP_URL");
+      }
+      const existing = await pickHostPageTarget(cdpUrl);
+      if (!existing) {
+        throw new Error(
+          "No host Chrome page to attach for enquiry. Open https://www.daft.ie/ in the DISPLAY=:0 Chrome (DAFT_CHROME_CDP_URL); do not createTarget — CDP-spawned tabs stick on Cloudflare."
+        );
+      }
+      targetId = existing;
+      reuseHostPage = true;
+      try {
+        await browser.send("Target.activateTarget", { targetId });
+      } catch {
+        /* ignore */
+      }
+    } else {
       if (!u.browserContextId) {
         const created = await browser.send<{ browserContextId: string }>(
           "Target.createBrowserContext"
         );
         u.browserContextId = created.browserContextId;
       }
-    }
-
-    const targetOpts: { url: string; browserContextId?: string } = {
-      url: "about:blank",
-    };
-    if (!hostProfile && u.browserContextId) {
-      targetOpts.browserContextId = u.browserContextId;
-    }
-
-    let targetId: string;
-    try {
-      ({ targetId } = await browser.send<{ targetId: string }>(
-        "Target.createTarget",
-        targetOpts
-      ));
-    } catch (err) {
-      if (hostProfile) throw err;
-      // Stale context after unexpected Chrome restart
-      const created = await browser.send<{ browserContextId: string }>(
-        "Target.createBrowserContext"
-      );
-      u.browserContextId = created.browserContextId;
-      ({ targetId } = await browser.send<{ targetId: string }>(
-        "Target.createTarget",
-        {
-          url: "about:blank",
-          browserContextId: u.browserContextId,
-        }
-      ));
+      try {
+        ({ targetId } = await browser.send<{ targetId: string }>(
+          "Target.createTarget",
+          {
+            url: "about:blank",
+            browserContextId: u.browserContextId,
+          }
+        ));
+      } catch {
+        const created = await browser.send<{ browserContextId: string }>(
+          "Target.createBrowserContext"
+        );
+        u.browserContextId = created.browserContextId;
+        ({ targetId } = await browser.send<{ targetId: string }>(
+          "Target.createTarget",
+          {
+            url: "about:blank",
+            browserContextId: u.browserContextId,
+          }
+        ));
+      }
     }
 
     const attached = await browser.send<{ sessionId: string }>(
@@ -368,9 +397,6 @@ export class ChromePool {
     await page.enable();
 
     if (hostProfile) {
-      // Host profile already has live cf_clearance from DISPLAY=:0 Chrome.
-      // Do NOT clearCfCookies here — that wipes clearance and forces a new
-      // Turnstile that CDP cannot solve (enquiry then dies as "Just a moment").
       const userCookies = this.loadCookies(u.email);
       if (userCookies.length) await page.setCookies(userCookies);
     } else {
@@ -392,7 +418,6 @@ export class ChromePool {
       try {
         const latest = await page.getCookies();
         saveGlobalCfCookies(this.conf.cookieDir, latest);
-        // Persist daft/keycloak session only — CF lives in _cf_global.json
         const keep = stripCfCookies(latest).filter((c) =>
           /daft\.ie|keycloak/i.test(c.domain)
         );
@@ -400,10 +425,13 @@ export class ChromePool {
       } catch {
         /* ignore */
       }
-      try {
-        await page.close();
-      } catch {
-        /* ignore */
+      // Never close the host Chrome tab we attached to — only spawned tabs.
+      if (!reuseHostPage) {
+        try {
+          await page.close();
+        } catch {
+          /* ignore */
+        }
       }
       u.leases = Math.max(0, u.leases - 1);
       this.activeLeases = Math.max(0, this.activeLeases - 1);

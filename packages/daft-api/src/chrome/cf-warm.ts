@@ -17,7 +17,7 @@ type CdpTarget = {
 };
 
 /** Prefer the host's visible window tab (attach mode) over a fresh CDP tab. */
-async function pickHostPageTarget(
+export async function pickHostPageTarget(
   cdpHttpUrl: string
 ): Promise<string | undefined> {
   const base = cdpHttpUrl.replace(/\/$/, "");
