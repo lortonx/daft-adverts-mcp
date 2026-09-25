@@ -159,10 +159,15 @@ export class PageHandle {
   /**
    * Navigate and wait for CDP load lifecycle (or loadEventFired), then document body.
    * `timeoutMs` is a deadline — not a fixed sleep.
+   * Races CDP events with in-page readyState so a missed session event cannot burn the full timeout.
    */
   async navigate(url: string, timeoutMs = 30_000) {
     await this.send("Page.setLifecycleEventsEnabled", { enabled: true }).catch(
       () => undefined
+    );
+
+    const beforeHref = await this.evaluate<string>(`location.href`).catch(
+      () => ""
     );
 
     let settled = false;
@@ -184,9 +189,14 @@ export class PageHandle {
       rejectLoad(new Error(`navigate timeout after ${timeoutMs}ms: ${url}`));
     }, timeoutMs);
 
+    let expectLoaderId: string | undefined;
     const offLife = this.onSessionEvent("Page.lifecycleEvent", (params) => {
       const name = String(params.name ?? "");
-      if (name === "load" || name === "DOMContentLoaded") finish();
+      const loaderId = params.loaderId != null ? String(params.loaderId) : "";
+      if (expectLoaderId && loaderId && loaderId !== expectLoaderId) return;
+      if (name === "load" || name === "DOMContentLoaded" || name === "networkAlmostIdle") {
+        finish();
+      }
     });
     const offLoad = this.onSessionEvent("Page.loadEventFired", () => finish());
     const offStop = this.onSessionEvent("Page.frameStoppedLoading", () =>
@@ -194,13 +204,23 @@ export class PageHandle {
     );
 
     try {
-      const nav = await this.send<{ errorText?: string }>("Page.navigate", {
-        url,
-      });
+      const nav = await this.send<{
+        errorText?: string;
+        loaderId?: string;
+      }>("Page.navigate", { url });
       if (nav.errorText) {
         throw new Error(`navigate failed: ${nav.errorText} (${url})`);
       }
-      await loadP;
+      expectLoaderId = nav.loaderId;
+
+      const targetOrigin = JSON.stringify(new URL(url).origin);
+      const beforeJson = JSON.stringify(beforeHref);
+      const docReady = this.waitUntil(
+        `(location.href !== ${beforeJson} || document.readyState === 'complete') && !!document.body && document.readyState !== 'loading' && location.href.startsWith(${targetOrigin})`,
+        { timeoutMs, label: `document ready ${url}` }
+      ).then(() => finish());
+
+      await Promise.race([loadP, docReady]);
     } finally {
       clearTimeout(timer);
       offLife();
@@ -212,12 +232,12 @@ export class PageHandle {
       `!!document.body && document.readyState !== 'loading'`,
       {
         timeoutMs: Math.min(10_000, timeoutMs),
-        label: `document ready after ${url}`,
+        label: `document body after ${url}`,
       }
     );
   }
 
-  async acceptCookies(appearTimeoutMs = 2_500) {
+  async acceptCookies(appearTimeoutMs = 1_500) {
     const btnPresent = `[...document.querySelectorAll('button')].some(b => /accept all/i.test(b.innerText || ''))`;
     const clickExpr = `(() => {
       const btn = [...document.querySelectorAll('button')].find(b =>
@@ -227,19 +247,30 @@ export class PageHandle {
     })()`;
 
     let clicked = await this.evaluate<boolean>(clickExpr);
-    if (!clicked) {
-      try {
-        await this.waitUntil(btnPresent, {
-          timeoutMs: appearTimeoutMs,
-          label: "cookie Accept All",
-        });
-        clicked = await this.evaluate<boolean>(clickExpr);
-      } catch {
-        return; // no banner
-      }
+    if (clicked) {
+      await this.waitUntil(`!(${btnPresent})`, {
+        timeoutMs: 5_000,
+        label: "cookie banner gone",
+      }).catch(() => undefined);
+      return;
     }
-    if (!clicked) return;
 
+    // No button yet — only wait if a consent shell is already in the DOM.
+    const shell = await this.evaluate<boolean>(`!!document.querySelector(
+      '#onetrust-banner-sdk, #onetrust-consent-sdk, #CookieConsent, [id*="cookie" i], [class*="cookie" i]'
+    )`);
+    if (!shell) return;
+
+    try {
+      await this.waitUntil(btnPresent, {
+        timeoutMs: appearTimeoutMs,
+        label: "cookie Accept All",
+      });
+    } catch {
+      return;
+    }
+    clicked = await this.evaluate<boolean>(clickExpr);
+    if (!clicked) return;
     await this.waitUntil(`!(${btnPresent})`, {
       timeoutMs: 5_000,
       label: "cookie banner gone",
