@@ -90,7 +90,7 @@ export async function warmCfClearance(
     if (!conf.cdpUrl) {
       await page.clearCfCookies();
     }
-    await page.navigate("https://www.daft.ie/", 3000);
+    await page.navigate("https://www.daft.ie/");
     await page.waitCfGone(opts.maxSec ?? 120);
     const raw = await page.getCookies();
     const cookies = extractCfCookies(raw).filter(

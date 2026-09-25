@@ -9,7 +9,6 @@
  * - Idle timeout kills Chrome (+ Xvfb) when no active leases
  */
 import { mkdirSync, readFileSync, writeFileSync, existsSync } from "node:fs";
-import { setTimeout as sleep } from "node:timers/promises";
 import { ChromeProcess } from "./chrome-process";
 import type { CdpSession } from "./cdp";
 import { PageHandle } from "./page";
@@ -504,9 +503,4 @@ export function resetChromePoolForTests() {
   const p = singleton;
   singleton = null;
   return p?.shutdown();
-}
-
-/** Soft wait used by enquiry flow */
-export async function pause(ms: number) {
-  await sleep(ms);
 }

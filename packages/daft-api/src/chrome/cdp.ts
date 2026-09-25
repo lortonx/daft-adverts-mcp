@@ -7,7 +7,13 @@ export type CdpMessage = {
   params?: Record<string, unknown>;
   result?: unknown;
   error?: { message?: string; code?: number };
+  sessionId?: string;
 };
+
+export type CdpEventHandler = (
+  params: Record<string, unknown>,
+  sessionId?: string
+) => void;
 
 export class CdpSession {
   private id = 0;
@@ -15,7 +21,7 @@ export class CdpSession {
     number,
     { resolve: (v: unknown) => void; reject: (e: Error) => void }
   >();
-  private handlers = new Map<string, Set<(params: Record<string, unknown>) => void>>();
+  private handlers = new Map<string, Set<CdpEventHandler>>();
   private closed = false;
 
   constructor(private readonly ws: WebSocket) {
@@ -33,7 +39,7 @@ export class CdpSession {
     return !this.closed && this.ws.readyState === WebSocket.OPEN;
   }
 
-  on(method: string, fn: (params: Record<string, unknown>) => void) {
+  on(method: string, fn: CdpEventHandler) {
     let set = this.handlers.get(method);
     if (!set) {
       set = new Set();
@@ -58,7 +64,7 @@ export class CdpSession {
     if (msg.method) {
       const set = this.handlers.get(msg.method);
       if (set) {
-        for (const fn of set) fn(msg.params ?? {});
+        for (const fn of set) fn(msg.params ?? {}, msg.sessionId);
       }
     }
   }

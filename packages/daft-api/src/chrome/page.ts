@@ -1,7 +1,7 @@
 /**
  * Page helpers over an attached CDP target session.
+ * Waits use CDP lifecycle events + in-page MutationObserver / rAF poll — no fixed sleeps.
  */
-import { setTimeout as sleep } from "node:timers/promises";
 import type { CdpSession } from "./cdp";
 import type { StoredCookie } from "./util";
 
@@ -27,6 +27,18 @@ const CHALLENGE_EXPR = `(() => {
   };
 })()`;
 
+const CF_CLEARED_PRED = `(() => {
+  const title = document.title || '';
+  const body = document.body?.innerText || '';
+  const href = location.href || '';
+  const blob = title + ' ' + body;
+  const cfUrl = /__cf_chl|cf_chl_rt|challenges\\.cloudflare/i.test(href);
+  const cfText = /just a moment|checking the security|security check/i.test(blob);
+  const normal = /property website|sign in|accept all|find your way|buy.*sell|search homes|place ad|residential|commercial|daft mortgage/i.test(blob);
+  const challenge = (cfText || cfUrl) && !normal;
+  return normal || !challenge;
+})()`;
+
 export class PageHandle {
   networkLog: Array<{ url: string; status: number }> = [];
 
@@ -38,20 +50,6 @@ export class PageHandle {
 
   send<T = unknown>(method: string, params: Record<string, unknown> = {}) {
     return this.browser.send<T>(method, params, this.sessionId);
-  }
-
-  async enable() {
-    await this.send("Page.enable");
-    await this.send("Runtime.enable");
-    await this.send("Network.enable");
-    await this.send("Page.addScriptToEvaluateOnNewDocument", {
-      source: STEALTH_SCRIPT,
-    }).catch(() => undefined);
-  }
-
-  async navigate(url: string, waitMs = 4000) {
-    await this.send("Page.navigate", { url });
-    await sleep(waitMs);
   }
 
   async evaluate<T>(expression: string): Promise<T> {
@@ -77,14 +75,175 @@ export class PageHandle {
     return r.result?.value as T;
   }
 
-  async acceptCookies() {
-    await this.evaluate(`(() => {
+  async enable() {
+    await this.send("Page.enable");
+    await this.send("Runtime.enable");
+    await this.send("Network.enable");
+    await this.send("Page.setLifecycleEventsEnabled", { enabled: true }).catch(
+      () => undefined
+    );
+    await this.send("Page.addScriptToEvaluateOnNewDocument", {
+      source: STEALTH_SCRIPT,
+    }).catch(() => undefined);
+  }
+
+  /** Subscribe to a CDP event for this session only. */
+  private onSessionEvent(
+    method: string,
+    fn: (params: Record<string, unknown>) => void
+  ) {
+    return this.browser.on(method, (params, sessionId) => {
+      if (sessionId && sessionId !== this.sessionId) return;
+      fn(params);
+    });
+  }
+
+  /**
+   * Wait until an in-page predicate is true.
+   * Uses MutationObserver + requestAnimationFrame poll (no fixed delay).
+   * `predicateJs` must be a JS expression returning boolean.
+   */
+  async waitUntil(
+    predicateJs: string,
+    opts: { timeoutMs?: number; label?: string } = {}
+  ): Promise<void> {
+    const timeoutMs = Math.max(1, opts.timeoutMs ?? 15_000);
+    const label = opts.label ?? "condition";
+    await this.evaluate(`(async () => {
+      const pred = () => {
+        try { return !!(${predicateJs}); } catch (_) { return false; }
+      };
+      if (pred()) return true;
+      await new Promise((resolve, reject) => {
+        let done = false;
+        const finish = (ok, err) => {
+          if (done) return;
+          done = true;
+          clearTimeout(timeout);
+          obs.disconnect();
+          if (ok) resolve(true);
+          else reject(err);
+        };
+        const timeout = setTimeout(() => {
+          finish(false, new Error(${JSON.stringify(label)} + ' timeout after ${timeoutMs}ms'));
+        }, ${timeoutMs});
+        const obs = new MutationObserver(() => { if (pred()) finish(true); });
+        obs.observe(document.documentElement, {
+          childList: true,
+          subtree: true,
+          attributes: true,
+          characterData: true,
+        });
+        const tick = () => {
+          if (done) return;
+          if (pred()) { finish(true); return; }
+          requestAnimationFrame(tick);
+        };
+        requestAnimationFrame(tick);
+      });
+      return true;
+    })()`);
+  }
+
+  async waitForSelector(
+    selector: string,
+    opts: { timeoutMs?: number; label?: string } = {}
+  ): Promise<void> {
+    const sel = JSON.stringify(selector);
+    await this.waitUntil(`!!document.querySelector(${sel})`, {
+      timeoutMs: opts.timeoutMs ?? 15_000,
+      label: opts.label ?? `selector ${selector}`,
+    });
+  }
+
+  /**
+   * Navigate and wait for CDP load lifecycle (or loadEventFired), then document body.
+   * `timeoutMs` is a deadline — not a fixed sleep.
+   */
+  async navigate(url: string, timeoutMs = 30_000) {
+    await this.send("Page.setLifecycleEventsEnabled", { enabled: true }).catch(
+      () => undefined
+    );
+
+    let settled = false;
+    let resolveLoad!: () => void;
+    let rejectLoad!: (e: Error) => void;
+    const loadP = new Promise<void>((res, rej) => {
+      resolveLoad = res;
+      rejectLoad = rej;
+    });
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      resolveLoad();
+    };
+
+    const timer = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      rejectLoad(new Error(`navigate timeout after ${timeoutMs}ms: ${url}`));
+    }, timeoutMs);
+
+    const offLife = this.onSessionEvent("Page.lifecycleEvent", (params) => {
+      const name = String(params.name ?? "");
+      if (name === "load" || name === "DOMContentLoaded") finish();
+    });
+    const offLoad = this.onSessionEvent("Page.loadEventFired", () => finish());
+    const offStop = this.onSessionEvent("Page.frameStoppedLoading", () =>
+      finish()
+    );
+
+    try {
+      const nav = await this.send<{ errorText?: string }>("Page.navigate", {
+        url,
+      });
+      if (nav.errorText) {
+        throw new Error(`navigate failed: ${nav.errorText} (${url})`);
+      }
+      await loadP;
+    } finally {
+      clearTimeout(timer);
+      offLife();
+      offLoad();
+      offStop();
+    }
+
+    await this.waitUntil(
+      `!!document.body && document.readyState !== 'loading'`,
+      {
+        timeoutMs: Math.min(10_000, timeoutMs),
+        label: `document ready after ${url}`,
+      }
+    );
+  }
+
+  async acceptCookies(appearTimeoutMs = 2_500) {
+    const btnPresent = `[...document.querySelectorAll('button')].some(b => /accept all/i.test(b.innerText || ''))`;
+    const clickExpr = `(() => {
       const btn = [...document.querySelectorAll('button')].find(b =>
         /accept all/i.test(b.innerText || ''));
-      if (btn) btn.click();
-      return !!btn;
-    })()`);
-    await sleep(600);
+      if (btn) { btn.click(); return true; }
+      return false;
+    })()`;
+
+    let clicked = await this.evaluate<boolean>(clickExpr);
+    if (!clicked) {
+      try {
+        await this.waitUntil(btnPresent, {
+          timeoutMs: appearTimeoutMs,
+          label: "cookie Accept All",
+        });
+        clicked = await this.evaluate<boolean>(clickExpr);
+      } catch {
+        return; // no banner
+      }
+    }
+    if (!clicked) return;
+
+    await this.waitUntil(`!(${btnPresent})`, {
+      timeoutMs: 5_000,
+      label: "cookie banner gone",
+    }).catch(() => undefined);
   }
 
   private async hasCfClearance(): Promise<boolean> {
@@ -165,15 +324,24 @@ export class PageHandle {
     return false;
   }
 
-  /**
-   * Wait until Cloudflare challenge clears. Seeds cf_clearance from the pool
-   * should make this fast; otherwise clicks Turnstile and reloads once.
-   */
+  /** Wait until CF challenge cleared; actions then wait on DOM/lifecycle, not sleeps. */
   async waitCfGone(maxSec = 45) {
+    const deadline = Date.now() + maxSec * 1000;
     let reloaded = false;
     let navigatedClean = false;
+    let turnstileClicks = 0;
 
-    for (let i = 0; i < maxSec; i++) {
+    const remaining = () => Math.max(0, deadline - Date.now());
+    const waitClearedOrChange = async (sliceMs: number) => {
+      const ms = Math.min(sliceMs, remaining());
+      if (ms <= 0) return;
+      await this.waitUntil(CF_CLEARED_PRED, {
+        timeoutMs: ms,
+        label: "cf challenge clear",
+      }).catch(() => undefined);
+    };
+
+    while (remaining() > 0) {
       const st = await this.evaluate<{
         challenge: boolean;
         cfUrl: boolean;
@@ -186,50 +354,43 @@ export class PageHandle {
 
       if (st.normal || !st.challenge) return;
 
-      // Stale injected clearance + mid-challenge cookie = infinite loop; wipe and retry.
-      if (midChallenge && hasCf && i >= 3 && i % 5 === 3) {
+      if (midChallenge && hasCf && turnstileClicks >= 1 && !reloaded) {
         await this.clearCfCookies();
         await this.send("Page.reload", { ignoreCache: true });
-        await sleep(3500);
-        continue;
-      }
-
-      // Host profile often already has clearance — give the page a beat to settle.
-      if (hasCf && !midChallenge && i < 4) {
-        await sleep(1500);
+        reloaded = true;
+        await waitClearedOrChange(12_000);
         continue;
       }
 
       if (hasCf && st.cfUrl && !navigatedClean) {
         navigatedClean = true;
-        await this.send("Page.navigate", { url: "https://www.daft.ie/" });
-        await sleep(4000);
+        await this.navigate("https://www.daft.ie/", Math.min(20_000, remaining()));
         continue;
       }
 
-      if (hasCf && !reloaded && i >= 2) {
+      if (hasCf && !reloaded && turnstileClicks >= 2) {
         reloaded = true;
         await this.send("Page.reload", { ignoreCache: false });
-        await sleep(3500);
+        await waitClearedOrChange(12_000);
         continue;
       }
 
-      if (i > 0 && i % 2 === 0) {
-        await this.clickTurnstile();
-      }
-
-      await sleep(1000);
+      await this.clickTurnstile();
+      turnstileClicks++;
+      await waitClearedOrChange(8_000);
     }
 
-    const last = await this.evaluate<{ title: string; href: string; normal: boolean }>(
-      `({
-        title: document.title,
-        href: location.href,
-        normal: /property website|sign in|accept all|find your way|buy.*sell|search homes|place ad|residential|commercial|daft mortgage/i.test(
-          document.title + ' ' + (document.body?.innerText || '')
-        ),
-      })`
-    );
+    const last = await this.evaluate<{
+      title: string;
+      href: string;
+      normal: boolean;
+    }>(`({
+      title: document.title,
+      href: location.href,
+      normal: /property website|sign in|accept all|find your way|buy.*sell|search homes|place ad|residential|commercial|daft mortgage/i.test(
+        document.title + ' ' + (document.body?.innerText || '')
+      ),
+    })`);
     if (last.normal) return;
     throw new Error(
       `Cloudflare/security challenge timeout (${last.title} @ ${last.href}). ` +
@@ -242,10 +403,7 @@ export class PageHandle {
       "Network.getAllCookies"
     );
     for (const c of r.cookies ?? []) {
-      if (
-        !/daft\.ie/i.test(c.domain) &&
-        !/\.daft\.ie$/i.test(c.domain)
-      ) {
+      if (!/daft\.ie/i.test(c.domain) && !/\.daft\.ie$/i.test(c.domain)) {
         continue;
       }
       if (/^cf_|^__cf/i.test(c.name)) {
