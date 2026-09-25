@@ -116,26 +116,34 @@ export class PageHandle {
       if (pred()) return true;
       await new Promise((resolve, reject) => {
         let done = false;
+        let obs = null;
         const finish = (ok, err) => {
           if (done) return;
           done = true;
           clearTimeout(timeout);
-          obs.disconnect();
+          try { obs && obs.disconnect(); } catch (_) {}
           if (ok) resolve(true);
           else reject(err);
         };
         const timeout = setTimeout(() => {
           finish(false, new Error(${JSON.stringify(label)} + ' timeout after ${timeoutMs}ms'));
         }, ${timeoutMs});
-        const obs = new MutationObserver(() => { if (pred()) finish(true); });
-        obs.observe(document.documentElement, {
-          childList: true,
-          subtree: true,
-          attributes: true,
-          characterData: true,
-        });
+        const attach = () => {
+          const root = document.documentElement || document.body;
+          if (!root) return false;
+          obs = new MutationObserver(() => { if (pred()) finish(true); });
+          obs.observe(root, {
+            childList: true,
+            subtree: true,
+            attributes: true,
+            characterData: true,
+          });
+          return true;
+        };
+        attach();
         const tick = () => {
           if (done) return;
+          if (!obs) attach();
           if (pred()) { finish(true); return; }
           requestAnimationFrame(tick);
         };

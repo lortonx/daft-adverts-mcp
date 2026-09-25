@@ -351,7 +351,7 @@ async function waitReplyStatus(
         if (s != null && s > 0) finish(s);
         else if (successUi()) finish(-1);
       });
-      obs.observe(document.documentElement, {
+      obs.observe(document.documentElement || document.body || document, {
         childList: true, subtree: true, characterData: true,
       });
       const tick = () => {
