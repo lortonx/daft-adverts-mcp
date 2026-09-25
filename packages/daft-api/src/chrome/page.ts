@@ -12,12 +12,13 @@ const STEALTH_SCRIPT = `(() => {
 
 const CHALLENGE_EXPR = `(() => {
   const title = document.title || '';
-  const body = document.body?.innerText || '';
   const href = location.href || '';
+  const body = (document.body?.textContent || '').slice(0, 800);
   const blob = title + ' ' + body;
   const cfUrl = /__cf_chl|cf_chl_rt|challenges\\.cloudflare/i.test(href);
-  const cfText = /just a moment|checking the security|security check/i.test(blob);
-  const normal = /property website|sign in|accept all|find your way|buy.*sell|search homes|place ad|residential|commercial|daft mortgage/i.test(blob);
+  const cfText = /just a moment|checking your browser|checking the security of your connection/i.test(blob);
+  const normal = /property website|sign in|find your way|buy.*sell|search homes|place ad|residential|commercial|daft mortgage|MESSAGE|EMAIL|share this/i.test(blob)
+    || /\\/share\\/|\\/for-rent\\/|\\/for-sale\\//i.test(href);
   return {
     challenge: (cfText || cfUrl) && !normal,
     cfUrl,
@@ -29,12 +30,13 @@ const CHALLENGE_EXPR = `(() => {
 
 const CF_CLEARED_PRED = `(() => {
   const title = document.title || '';
-  const body = document.body?.innerText || '';
   const href = location.href || '';
+  const body = (document.body?.textContent || '').slice(0, 800);
   const blob = title + ' ' + body;
   const cfUrl = /__cf_chl|cf_chl_rt|challenges\\.cloudflare/i.test(href);
-  const cfText = /just a moment|checking the security|security check/i.test(blob);
-  const normal = /property website|sign in|accept all|find your way|buy.*sell|search homes|place ad|residential|commercial|daft mortgage/i.test(blob);
+  const cfText = /just a moment|checking your browser|checking the security of your connection/i.test(blob);
+  const normal = /property website|sign in|find your way|buy.*sell|search homes|place ad|residential|commercial|daft mortgage|MESSAGE|EMAIL|share this/i.test(blob)
+    || /\\/share\\/|\\/for-rent\\/|\\/for-sale\\//i.test(href);
   const challenge = (cfText || cfUrl) && !normal;
   return normal || !challenge;
 })()`;
@@ -100,57 +102,32 @@ export class PageHandle {
 
   /**
    * Wait until an in-page predicate is true.
-   * Uses MutationObserver + requestAnimationFrame poll (no fixed delay).
+   * Deadline and poll tick run on the Node side — Chrome throttles timers/rAF in background tabs.
    * `predicateJs` must be a JS expression returning boolean.
    */
   async waitUntil(
     predicateJs: string,
-    opts: { timeoutMs?: number; label?: string } = {}
+    opts: { timeoutMs?: number; label?: string; pollMs?: number } = {}
   ): Promise<void> {
     const timeoutMs = Math.max(1, opts.timeoutMs ?? 15_000);
+    const pollMs = Math.max(10, opts.pollMs ?? 50);
     const label = opts.label ?? "condition";
-    await this.evaluate(`(async () => {
-      const pred = () => {
-        try { return !!(${predicateJs}); } catch (_) { return false; }
-      };
-      if (pred()) return true;
-      await new Promise((resolve, reject) => {
-        let done = false;
-        let obs = null;
-        const finish = (ok, err) => {
-          if (done) return;
-          done = true;
-          clearTimeout(timeout);
-          try { obs && obs.disconnect(); } catch (_) {}
-          if (ok) resolve(true);
-          else reject(err);
-        };
-        const timeout = setTimeout(() => {
-          finish(false, new Error(${JSON.stringify(label)} + ' timeout after ${timeoutMs}ms'));
-        }, ${timeoutMs});
-        const attach = () => {
-          const root = document.documentElement || document.body;
-          if (!root) return false;
-          obs = new MutationObserver(() => { if (pred()) finish(true); });
-          obs.observe(root, {
-            childList: true,
-            subtree: true,
-            attributes: true,
-            characterData: true,
-          });
-          return true;
-        };
-        attach();
-        const tick = () => {
-          if (done) return;
-          if (!obs) attach();
-          if (pred()) { finish(true); return; }
-          requestAnimationFrame(tick);
-        };
-        requestAnimationFrame(tick);
-      });
-      return true;
-    })()`);
+    const deadline = Date.now() + timeoutMs;
+    const expr = `(() => { try { return !!(${predicateJs}); } catch (_) { return false; } })()`;
+
+    while (Date.now() < deadline) {
+      try {
+        if (await this.evaluate<boolean>(expr)) return;
+      } catch {
+        // Execution context destroyed mid-navigation — keep polling.
+      }
+      const left = deadline - Date.now();
+      if (left <= 0) break;
+      await new Promise<void>((r) =>
+        setTimeout(r, Math.min(pollMs, left))
+      );
+    }
+    throw new Error(`${label} timeout after ${timeoutMs}ms`);
   }
 
   async waitForSelector(
@@ -165,124 +142,243 @@ export class PageHandle {
   }
 
   /**
-   * Navigate and wait for CDP load lifecycle (or loadEventFired), then document body.
-   * `timeoutMs` is a deadline — not a fixed sleep.
-   * Races CDP events with in-page readyState so a missed session event cannot burn the full timeout.
+   * Navigate and wait for the new top-level document + networkAlmostIdle.
+   * Never leave an in-page Promise spanning the navigation — CDP destroys that context.
    */
   async navigate(url: string, timeoutMs = 30_000) {
     await this.send("Page.setLifecycleEventsEnabled", { enabled: true }).catch(
       () => undefined
     );
 
-    const beforeHref = await this.evaluate<string>(`location.href`).catch(
-      () => ""
-    );
-
     let settled = false;
-    let resolveLoad!: () => void;
-    let rejectLoad!: (e: Error) => void;
-    const loadP = new Promise<void>((res, rej) => {
-      resolveLoad = res;
-      rejectLoad = rej;
+    let resolveNav!: () => void;
+    let rejectNav!: (e: Error) => void;
+    const navP = new Promise<void>((res, rej) => {
+      resolveNav = res;
+      rejectNav = rej;
     });
-    const finish = () => {
-      if (settled) return;
-      settled = true;
-      resolveLoad();
+
+    const offs: Array<() => void> = [];
+    const cleanup = () => {
+      clearTimeout(timer);
+      for (const off of offs) off();
+      offs.length = 0;
     };
 
     const timer = setTimeout(() => {
       if (settled) return;
       settled = true;
-      rejectLoad(new Error(`navigate timeout after ${timeoutMs}ms: ${url}`));
+      cleanup();
+      rejectNav(new Error(`navigate timeout after ${timeoutMs}ms: ${url}`));
     }, timeoutMs);
 
-    let expectLoaderId: string | undefined;
-    const offLife = this.onSessionEvent("Page.lifecycleEvent", (params) => {
-      const name = String(params.name ?? "");
-      const loaderId = params.loaderId != null ? String(params.loaderId) : "";
-      if (expectLoaderId && loaderId && loaderId !== expectLoaderId) return;
-      if (name === "load" || name === "DOMContentLoaded" || name === "networkAlmostIdle") {
-        finish();
-      }
-    });
-    const offLoad = this.onSessionEvent("Page.loadEventFired", () => finish());
-    const offStop = this.onSessionEvent("Page.frameStoppedLoading", () =>
-      finish()
+    const hit = () => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      resolveNav();
+    };
+
+    offs.push(
+      this.onSessionEvent("Page.frameNavigated", (params) => {
+        const frame = params.frame as
+          | { url?: string; parentId?: string }
+          | undefined;
+        if (frame?.parentId) return; // iframe
+        hit();
+      })
     );
+    offs.push(this.onSessionEvent("Page.loadEventFired", () => hit()));
+    offs.push(this.onSessionEvent("Page.domContentEventFired", () => hit()));
 
     try {
-      const nav = await this.send<{
-        errorText?: string;
-        loaderId?: string;
-      }>("Page.navigate", { url });
+      const nav = await this.send<{ errorText?: string }>("Page.navigate", {
+        url,
+      });
       if (nav.errorText) {
         throw new Error(`navigate failed: ${nav.errorText} (${url})`);
       }
-      expectLoaderId = nav.loaderId;
-
-      const targetOrigin = JSON.stringify(new URL(url).origin);
-      const beforeJson = JSON.stringify(beforeHref);
-      const docReady = this.waitUntil(
-        `(location.href !== ${beforeJson} || document.readyState === 'complete') && !!document.body && document.readyState !== 'loading' && location.href.startsWith(${targetOrigin})`,
-        { timeoutMs, label: `document ready ${url}` }
-      ).then(() => finish());
-
-      await Promise.race([loadP, docReady]);
-    } finally {
-      clearTimeout(timer);
-      offLife();
-      offLoad();
-      offStop();
-    }
-
-    await this.waitUntil(
-      `!!document.body && document.readyState !== 'loading'`,
-      {
-        timeoutMs: Math.min(10_000, timeoutMs),
-        label: `document body after ${url}`,
+      await navP;
+    } catch (err) {
+      if (!settled) {
+        settled = true;
+        cleanup();
       }
-    );
+      throw err;
+    }
+    // Document swapped — callers wait for their own selectors (MESSAGE, login fields…).
+    // Do not evaluate here: a busy main thread would block for seconds.
   }
 
-  async acceptCookies(appearTimeoutMs = 1_500) {
-    const btnPresent = `[...document.querySelectorAll('button')].some(b => /accept all/i.test(b.innerText || ''))`;
-    const clickExpr = `(() => {
-      const btn = [...document.querySelectorAll('button')].find(b =>
-        /accept all/i.test(b.innerText || ''));
-      if (btn) { btn.click(); return true; }
-      return false;
-    })()`;
+  /** Wait until a network response URL matches (CDP Network domain — no page JS). */
+  async waitForResponse(
+    urlRe: RegExp,
+    timeoutMs = 15_000
+  ): Promise<void> {
+    let settled = false;
+    await new Promise<void>((resolve, reject) => {
+      const timer = setTimeout(() => {
+        if (settled) return;
+        settled = true;
+        off();
+        reject(
+          new Error(
+            `response ${urlRe} timeout after ${timeoutMs}ms`
+          )
+        );
+      }, timeoutMs);
+      const off = this.onSessionEvent(
+        "Network.responseReceived",
+        (params) => {
+          const url = String(
+            (params.response as { url?: string } | undefined)?.url ??
+              params.url ??
+              ""
+          );
+          if (!urlRe.test(url)) return;
+          if (settled) return;
+          settled = true;
+          clearTimeout(timer);
+          off();
+          resolve();
+        }
+      );
+    });
+  }
 
-    let clicked = await this.evaluate<boolean>(clickExpr);
-    if (clicked) {
-      await this.waitUntil(`!(${btnPresent})`, {
-        timeoutMs: 5_000,
-        label: "cookie banner gone",
-      }).catch(() => undefined);
-      return;
-    }
-
-    // No button yet — only wait if a consent shell is already in the DOM.
-    const shell = await this.evaluate<boolean>(`!!document.querySelector(
-      '#onetrust-banner-sdk, #onetrust-consent-sdk, #CookieConsent, [id*="cookie" i], [class*="cookie" i]'
-    )`);
-    if (!shell) return;
-
-    try {
-      await this.waitUntil(btnPresent, {
-        timeoutMs: appearTimeoutMs,
-        label: "cookie Accept All",
+  /** Wait for one of the given Page.lifecycleEvent names (Node-side deadline). */
+  async waitForLifecycle(
+    names: string[],
+    timeoutMs = 12_000
+  ): Promise<void> {
+    const want = new Set(names);
+    let settled = false;
+    await new Promise<void>((resolve, reject) => {
+      const timer = setTimeout(() => {
+        if (settled) return;
+        settled = true;
+        off();
+        reject(
+          new Error(`lifecycle ${names.join("|")} timeout after ${timeoutMs}ms`)
+        );
+      }, timeoutMs);
+      const off = this.onSessionEvent("Page.lifecycleEvent", (params) => {
+        const name = String(params.name ?? "");
+        if (!want.has(name)) return;
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        off();
+        resolve();
       });
-    } catch {
-      return;
+    });
+  }
+
+  /**
+   * Wait until CDP DOM.performSearch finds a BUTTON/A matching size heuristics.
+   * Returns node box center. No Runtime.evaluate.
+   */
+  async waitForTextButton(
+    search: string,
+    opts: { timeoutMs?: number } = {}
+  ): Promise<{ nodeId: number; x: number; y: number; w: number; h: number }> {
+    const timeoutMs = opts.timeoutMs ?? 15_000;
+    const deadline = Date.now() + timeoutMs;
+    await this.send("DOM.enable").catch(() => undefined);
+
+    while (Date.now() < deadline) {
+      const hit = await this.findTextButton(search);
+      if (hit) return hit;
+      await new Promise<void>((r) => setTimeout(r, 200));
     }
-    clicked = await this.evaluate<boolean>(clickExpr);
-    if (!clicked) return;
-    await this.waitUntil(`!(${btnPresent})`, {
-      timeoutMs: 5_000,
-      label: "cookie banner gone",
+    throw new Error(`waitForTextButton ${search} timeout after ${timeoutMs}ms`);
+  }
+
+  private async findTextButton(
+    search: string
+  ): Promise<{ nodeId: number; x: number; y: number; w: number; h: number } | null> {
+    try {
+      await this.send("DOM.getDocument", { depth: 0, pierce: true });
+      const { searchId, resultCount } = await this.send<{
+        searchId: string;
+        resultCount: number;
+      }>("DOM.performSearch", {
+        query: search,
+        includeUserAgentShadowDOM: true,
+      });
+      try {
+        if (resultCount <= 0) return null;
+        const { nodeIds } = await this.send<{ nodeIds: number[] }>(
+          "DOM.getSearchResults",
+          {
+            searchId,
+            fromIndex: 0,
+            toIndex: Math.min(resultCount, 40),
+          }
+        );
+        for (const nodeId of nodeIds ?? []) {
+          const described = await this.send<{
+            node?: { nodeName?: string };
+          }>("DOM.describeNode", { nodeId }).catch(() => null);
+          const nodeName = (described?.node?.nodeName ?? "").toUpperCase();
+          if (nodeName !== "BUTTON" && nodeName !== "A") continue;
+          const box = await this.send<{
+            model?: { content?: number[] };
+          }>("DOM.getBoxModel", { nodeId }).catch(() => null);
+          const content = box?.model?.content;
+          if (!content || content.length < 8) continue;
+          const xs = [content[0], content[2], content[4], content[6]];
+          const ys = [content[1], content[3], content[5], content[7]];
+          const w = Math.max(...xs) - Math.min(...xs);
+          const h = Math.max(...ys) - Math.min(...ys);
+          if (w < 40 || h < 16 || w > 220 || h > 64) continue;
+          return {
+            nodeId,
+            x: (Math.min(...xs) + Math.max(...xs)) / 2,
+            y: (Math.min(...ys) + Math.max(...ys)) / 2,
+            w,
+            h,
+          };
+        }
+      } finally {
+        await this.send("DOM.discardSearchResults", { searchId }).catch(
+          () => undefined
+        );
+      }
+    } catch {
+      return null;
+    }
+    return null;
+  }
+
+  /**
+   * Find MESSAGE/EMAIL via CDP DOM.performSearch and click with Input events.
+   * Avoids Runtime.evaluate (blocked while React hydrates the listing).
+   */
+  async clickByText(
+    pattern: RegExp,
+    opts: { timeoutMs?: number; search?: string } = {}
+  ): Promise<string> {
+    const search = opts.search ?? "MESSAGE";
+    const hit = await this.waitForTextButton(search, {
+      timeoutMs: opts.timeoutMs ?? 15_000,
+    });
+    await this.send("DOM.scrollIntoViewIfNeeded", {
+      nodeId: hit.nodeId,
     }).catch(() => undefined);
+    await this.clickAt(hit.x, hit.y);
+    return `${search}:${Math.round(hit.w)}x${Math.round(hit.h)}`;
+  }
+
+  /** Optional: click known consent SDK accept control (no full-button scan). */
+  async acceptCookies(_appearTimeoutMs = 800) {
+    await this.evaluate(`(() => {
+      const sel = '#onetrust-accept-btn-handler, #CybotCookiebotDialogBodyLevelButtonLevelOptinAllowAll, .cc-dismiss, .cc-allow';
+      const btn = document.querySelector(sel)
+        || [...document.querySelectorAll('button')].find(b => /^\\s*accept all\\s*$/i.test((b.innerText||'').trim()));
+      if (btn) btn.click();
+      return !!btn;
+    })()`).catch(() => undefined);
   }
 
   private async hasCfClearance(): Promise<boolean> {
@@ -363,8 +459,30 @@ export class PageHandle {
     return false;
   }
 
-  /** Wait until CF challenge cleared; actions then wait on DOM/lifecycle, not sleeps. */
+  /** Wait until CF challenge cleared. Prefer CDP (no page JS) — evaluate blocks on busy main thread. */
   async waitCfGone(maxSec = 45) {
+    try {
+      const tree = await this.send<{
+        frameTree: { frame: { url: string; name?: string } };
+      }>("Page.getFrameTree");
+      const url = tree.frameTree?.frame?.url ?? "";
+      const hasCf = await this.hasCfClearance();
+      if (
+        hasCf &&
+        /daft\.ie/i.test(url) &&
+        !/__cf_chl|challenges\.cloudflare/i.test(url)
+      ) {
+        return;
+      }
+      if (/just a moment/i.test(url)) {
+        /* real challenge URL — fall through */
+      } else if (/daft\.ie\/(share|for-rent|for-sale|)/i.test(url) && hasCf) {
+        return;
+      }
+    } catch {
+      /* fall through to DOM checks */
+    }
+
     const deadline = Date.now() + maxSec * 1000;
     let reloaded = false;
     let navigatedClean = false;

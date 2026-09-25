@@ -27,9 +27,9 @@ export type ChromeEnquiryResult = {
 };
 
 const MESSAGE_BTN = `([...document.querySelectorAll('button, a, [role=button]')].find(e => {
-  const t = (e.innerText||'').trim();
+  const t = (e.textContent||'').replace(/\\s+/g,' ').trim();
   const a = e.getAttribute('aria-label')||'';
-  return /^\\s*(MESSAGE|EMAIL)\\s*$/i.test(t)
+  return /^(MESSAGE|EMAIL)$/i.test(t)
     || /message|email|enquire|contact/i.test(a);
 }))`;
 
@@ -51,29 +51,42 @@ async function isSignedIn(page: PageHandle): Promise<boolean> {
   );
 }
 
-/** In-page: poll /api/auth/session via rAF until user present or timeout. */
+/** Poll /api/auth/session until user present or timeout (Node-side deadline). */
 async function waitSignedInInPage(page: PageHandle, timeoutMs = 25_000) {
-  await page.evaluate(`(async () => {
-    const deadline = Date.now() + ${timeoutMs};
-    while (Date.now() < deadline) {
-      const host = location.hostname;
-      const err = ((document.querySelector('.alert-error, .error, #input-error, .kc-feedback-text') || {}).innerText || '');
-      if (err && /invalid|incorrect|captcha|robot|failed/i.test(err)) {
-        throw new Error('chrome enquiry login failed: ' + err);
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    try {
+      const state = await page.evaluate<{
+        host: string;
+        err: string;
+        signed: boolean;
+      }>(`(async () => {
+        const err = ((document.querySelector('.alert-error, .error, #input-error, .kc-feedback-text') || {}).innerText || '');
+        let signed = false;
+        if (location.hostname === 'www.daft.ie') {
+          try {
+            const j = await fetch('https://www.daft.ie/api/auth/session', {
+              credentials: 'include',
+              signal: AbortSignal.timeout(5000),
+            }).then(r => r.json());
+            signed = !!(j && j.user);
+          } catch (_) {}
+        }
+        return { host: location.hostname, err, signed };
+      })()`);
+      if (state.err && /invalid|incorrect|captcha|robot|failed/i.test(state.err)) {
+        throw new Error(`chrome enquiry login failed: ${state.err}`);
       }
-      if (host === 'www.daft.ie') {
-        try {
-          const j = await fetch('https://www.daft.ie/api/auth/session', {
-            credentials: 'include',
-            signal: AbortSignal.timeout(5000),
-          }).then(r => r.json());
-          if (j && j.user) return true;
-        } catch (_) {}
-      }
-      await new Promise(r => requestAnimationFrame(r));
+      if (state.signed) return;
+    } catch (e) {
+      if (e instanceof Error && /login failed/i.test(e.message)) throw e;
     }
-    throw new Error('chrome enquiry: login timeout (' + location.hostname + location.pathname + ' title=' + document.title + ')');
-  })()`);
+    await new Promise<void>((r) => setTimeout(r, 100));
+  }
+  const where = await page.evaluate<string>(
+    `location.hostname + location.pathname + ' title=' + document.title`
+  ).catch(() => "unknown");
+  throw new Error(`chrome enquiry: login timeout (${where})`);
 }
 
 async function ensureKeycloak(page: PageHandle, listingUrl: string) {
@@ -84,7 +97,6 @@ async function ensureKeycloak(page: PageHandle, listingUrl: string) {
 
   await page.navigate("https://www.daft.ie/auth/signin");
   await page.waitCfGone();
-  await page.acceptCookies();
 
   try {
     await page.waitUntil(`location.hostname.includes('auth.daft.ie')`, {
@@ -98,7 +110,6 @@ async function ensureKeycloak(page: PageHandle, listingUrl: string) {
 
   await page.navigate(listingUrl);
   await page.waitCfGone();
-  await page.acceptCookies();
   await page.waitUntil(`!!(${MESSAGE_BTN})`, {
     timeoutMs: 15_000,
     label: "MESSAGE button for login redirect",
@@ -118,7 +129,6 @@ export async function ensureWebLogin(
 ): Promise<void> {
   await page.navigate("https://www.daft.ie/");
   await page.waitCfGone();
-  await page.acceptCookies();
   if (await isSignedIn(page)) return;
 
   await ensureKeycloak(page, listingUrl);
@@ -152,73 +162,72 @@ export async function ensureWebLogin(
 }
 
 async function openMessageForm(page: PageHandle, listingUrl: string) {
-  await page.navigate(listingUrl);
-  await page.waitCfGone();
-  await page.acceptCookies();
+  const t0 = Date.now();
+  const step = (label: string) =>
+    console.error(`[form +${Date.now() - t0}ms] ${label}`);
 
-  try {
-    await page.waitUntil(`!!(${MESSAGE_BTN})`, {
-      timeoutMs: 15_000,
-      label: "MESSAGE/EMAIL button",
-    });
-  } catch {
-    const hint = await page.evaluate<string>(`(() => {
-      const labels = [...document.querySelectorAll('button, a, [role=button]')]
-        .map(e => (e.innerText||'').trim())
-        .filter(t => /^(CALL|EMAIL|MESSAGE|SMS)$/i.test(t));
-      return labels.slice(0,8).join(',') || 'none';
-    })()`);
+  // Subscribe before navigate — listing XHR + idle often finish during load.
+  const idMatch = listingUrl.match(/\/(\d+)(?:\?|$)/);
+  const idRe = idMatch
+    ? new RegExp(
+        String.raw`(?:listing|ad|property|share|api).{0,80}${idMatch[1]}|${idMatch[1]}`,
+        "i"
+      )
+    : /daft\.ie\/api\//i;
+  await page.send("Page.setLifecycleEventsEnabled", { enabled: true }).catch(
+    () => undefined
+  );
+  const listingNet = page.waitForResponse(idRe, 12_000).catch(() => undefined);
+  const idleNet = page
+    .waitForLifecycle(["networkAlmostIdle", "networkIdle"], 15_000)
+    .catch(() => undefined);
+
+  await page.navigate(listingUrl);
+  step("navigated");
+  await Promise.all([listingNet, idleNet]);
+  step("listing network+idle");
+
+  // Wait until MESSAGE BUTTON exists in CDP DOM, then JS click (React needs it).
+  await page.waitForTextButton("MESSAGE", { timeoutMs: 15_000 });
+  step("message btn ready");
+  await page.evaluate(`(() => {
+    const el = ${MESSAGE_BTN};
+    if (!el) throw new Error('MESSAGE missing at click');
+    el.scrollIntoView({ block: 'center', inline: 'center' });
+    el.click();
+  })()`);
+  step("js click");
+
+  const postClickPred = `location.hostname.includes('auth.daft.ie') || /\\/auth\\/signin/i.test(location.href) || !!(${MESSAGE_FIELD}) || /already enquired/i.test(document.body?.textContent || '')`;
+
+  let opened = false;
+  for (let attempt = 0; attempt < 4; attempt++) {
+    try {
+      await page.waitUntil(postClickPred, {
+        timeoutMs: 5_000,
+        label: "message form, already, or login redirect",
+        pollMs: 200,
+      });
+      opened = true;
+      break;
+    } catch {
+      step(`post-click retry ${attempt + 1}`);
+      await page
+        .evaluate(`(() => { const el = ${MESSAGE_BTN}; el && el.click(); })()`)
+        .catch(() => undefined);
+    }
+  }
+  step(opened ? "post-click ready" : "post-click failed");
+  if (!opened) {
     throw new Error(
-      `chrome enquiry: no MESSAGE/EMAIL form on listing (visible contact: ${hint}). ` +
-        `Phone-only share ads cannot be contacted via send_enquiry.`
+      "chrome enquiry: message form did not open (CF or UI timeout)"
     );
   }
-
-  const clicked = await page.evaluate<string | null>(`(() => {
-    const el = ${MESSAGE_BTN};
-    if (!el) return null;
-    el.click();
-    return (el.innerText || el.getAttribute('aria-label') || '').trim();
-  })()`);
-
-  if (!clicked) {
-    throw new Error("chrome enquiry: MESSAGE click failed");
-  }
-
-  // Login redirect beats the form — fail fast on auth host.
-  await page
-    .waitUntil(
-      `location.hostname.includes('auth.daft.ie') || /\\/auth\\/signin/i.test(location.href) || !!(${MESSAGE_FIELD})`,
-      { timeoutMs: 20_000, label: "message form or login redirect" }
-    )
-    .catch(() => undefined);
 
   const href = await page.evaluate<string>(`location.href`);
   if (/auth\.daft\.ie|\/auth\/signin/i.test(href)) {
     throw new Error("chrome enquiry: MESSAGE redirected to login");
   }
-
-  const deadline = Date.now() + 20_000;
-  while (Date.now() < deadline) {
-    const ready = await page.evaluate<boolean>(`!!(${MESSAGE_FIELD})`);
-    if (ready) return;
-
-    const blocked = await page.evaluate<boolean>(
-      `/just a moment|checking the security/i.test(document.title + ' ' + (document.body?.innerText||''))`
-    );
-    if (blocked) {
-      await page.waitCfGone(30);
-      continue;
-    }
-
-    await page
-      .waitUntil(`!!(${MESSAGE_FIELD})`, {
-        timeoutMs: Math.min(3_000, deadline - Date.now()),
-        label: "message textarea",
-      })
-      .catch(() => undefined);
-  }
-  throw new Error("chrome enquiry: message form did not open (CF or UI timeout)");
 }
 
 /** React-controlled inputs ignore plain .value — use native setter + InputEvent. */
@@ -301,8 +310,9 @@ async function fillAndSubmit(
  */
 async function installReplyProbe(page: PageHandle) {
   await page.evaluate(`(() => {
-    if (window.__daftReplyProbe) return true;
     window.__daftReplyProbe = { status: null, body: null };
+    if (window.__daftReplyHooked) return true;
+    window.__daftReplyHooked = true;
     const note = (url, status, body) => {
       if (!/\\/old\\/v4\\/reply/i.test(String(url||''))) return;
       window.__daftReplyProbe.status = status;
@@ -333,40 +343,29 @@ async function installReplyProbe(page: PageHandle) {
   })()`);
 }
 
-/** rAF-poll probe + MutationObserver on success UI text. */
+/** Node-side poll of reply probe + success UI (avoids background-tab timer throttle). */
 async function waitReplyStatus(
   page: PageHandle,
   timeoutMs = 15_000
 ): Promise<number | undefined> {
-  const status = await page.evaluate<number | null>(`(async () => {
-    const deadline = Date.now() + ${timeoutMs};
-    const successUi = () => /thank you|message sent|enquiry sent|successfully|ad_message_success/i.test(document.body?.innerText || '');
-    return await new Promise((resolve) => {
-      const finish = (v) => {
-        obs.disconnect();
-        resolve(v);
-      };
-      const obs = new MutationObserver(() => {
-        const s = window.__daftReplyProbe?.status;
-        if (s != null && s > 0) finish(s);
-        else if (successUi()) finish(-1);
-      });
-      obs.observe(document.documentElement || document.body || document, {
-        childList: true, subtree: true, characterData: true,
-      });
-      const tick = () => {
-        const s = window.__daftReplyProbe?.status;
-        if (s != null && s > 0) { finish(s); return; }
-        if (successUi()) { finish(-1); return; }
-        if (Date.now() >= deadline) { finish(null); return; }
-        requestAnimationFrame(tick);
-      };
-      requestAnimationFrame(tick);
-    });
-  })()`);
-  if (status == null) return undefined;
-  if (status < 0) return undefined; // UI success without captured status
-  return status;
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    try {
+      const probe = await page.evaluate<{
+        status: number | null;
+        success: boolean;
+      }>(`({
+        status: window.__daftReplyProbe?.status ?? null,
+        success: /thank you|message sent|enquiry sent|successfully|ad_message_success/i.test(document.body?.innerText || ''),
+      })`);
+      if (probe.status != null && probe.status > 0) return probe.status;
+      if (probe.success) return undefined;
+    } catch {
+      /* context blip */
+    }
+    await new Promise<void>((r) => setTimeout(r, 50));
+  }
+  return undefined;
 }
 
 export async function sendEnquiryViaChrome(
@@ -376,10 +375,32 @@ export async function sendEnquiryViaChrome(
   pool.rememberPassword(input.email, input.password);
 
   return pool.withPage(input.email, input.password, async (page) => {
+    const t0 = Date.now();
+    const step = (label: string) =>
+      console.error(`[enquiry +${Date.now() - t0}ms] ${label}`);
+
+    step("start");
+    await page.send("Page.bringToFront").catch(() => undefined);
     await ensureWebLogin(page, input.email, input.password, input.listingUrl);
+    step("login");
     await openMessageForm(page, input.listingUrl);
+    step("form open");
+
+    const already = await page.evaluate<boolean>(
+      `/already enquired/i.test(document.body?.innerText || '')`
+    );
+    if (already) {
+      step("already_enquired");
+      return {
+        ok: true,
+        listingUrl: input.listingUrl,
+        detail: "already_enquired",
+      };
+    }
+
     await installReplyProbe(page);
     const submit = await fillAndSubmit(page, input);
+    step(`submit submitted=${submit.submitted}`);
     if (!submit.submitted) {
       return {
         ok: false,
@@ -389,6 +410,7 @@ export async function sendEnquiryViaChrome(
     }
 
     const replyStatus = await waitReplyStatus(page, 15_000);
+    step(`replyStatus=${replyStatus ?? "none"}`);
 
     const ui = await page.evaluate<{
       success: boolean;
@@ -415,6 +437,7 @@ export async function sendEnquiryViaChrome(
       (replyStatus != null && replyStatus >= 200 && replyStatus < 300) ||
       ui.success;
 
+    step(`done ok=${ok}`);
     return {
       ok,
       listingUrl: input.listingUrl,
