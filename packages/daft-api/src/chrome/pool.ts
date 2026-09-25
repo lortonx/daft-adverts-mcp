@@ -395,6 +395,29 @@ export class ChromePool {
     const page = new PageHandle(browser, attached.sessionId, targetId);
     await page.enable();
 
+    // Attach mode: if host tab left newtab/blank, navigate to daft.ie (do not createTarget).
+    if (hostProfile) {
+      try {
+        const tree = await page.send<{
+          frameTree: { frame: { url: string } };
+        }>("Page.getFrameTree");
+        const url = tree.frameTree?.frame?.url ?? "";
+        if (!/daft\.ie/i.test(url)) {
+          console.error(
+            `[chrome-pool] host tab was ${url || "(empty)"}; navigating to daft.ie`
+          );
+          await page.navigate("https://www.daft.ie/");
+          await page.waitCfGone(45);
+        }
+      } catch (err) {
+        console.error(
+          `[chrome-pool] host tab heal failed: ${
+            err instanceof Error ? err.message : String(err)
+          }`
+        );
+      }
+    }
+
     if (hostProfile) {
       const userCookies = this.loadCookies(u.email);
       if (userCookies.length) await page.setCookies(userCookies);

@@ -26,14 +26,19 @@ export async function pickHostPageTarget(
       r.json()
     )) as CdpTarget[];
     const pages = list.filter(
-      (t) =>
-        t.type === "page" &&
-        !t.url.startsWith("chrome-extension:") &&
-        !t.url.startsWith("chrome://")
+      (t) => t.type === "page" && !t.url.startsWith("chrome-extension:")
     );
+    // Prefer daft.ie; otherwise any real tab (incl. newtab) so we can navigate it.
+    // Never createTarget in attach mode — CDP-spawned tabs stick on Cloudflare.
     const preferred =
       pages.find((t) => /daft\.ie/i.test(t.url)) ??
-      pages.find((t) => t.url === "about:blank" || t.url === "") ??
+      pages.find(
+        (t) =>
+          t.url === "about:blank" ||
+          t.url === "" ||
+          t.url.startsWith("chrome://newtab")
+      ) ??
+      pages.find((t) => !t.url.startsWith("chrome://")) ??
       pages[0];
     return preferred?.id;
   } catch {
